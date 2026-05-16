@@ -37,7 +37,6 @@ let
     buildInputs = with prev.buildPackages; [
       openssl
       bison
-      yacc
       flex
       bc
       python3

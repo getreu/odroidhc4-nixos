@@ -84,7 +84,7 @@ in
   # ============================================================
   # Hardware-specific settings (Odroid HC4)
   # ============================================================
-  hardware.deviceTree.filter = [ dtbFilter ];
+  hardware.deviceTree.filter = dtbFilter;
 
   # Fan control (required for proper cooling)
   # Uses thermal_zone0 to control pwm-fan via pwm1
