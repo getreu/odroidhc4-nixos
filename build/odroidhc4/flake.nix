@@ -11,6 +11,10 @@
       # The overlay providing ubootOdroidC4, firmwareOdroidC4, and meson64-tools
       odroidOverlay = import ./overlay/odroid-c4.nix;
 
+      # Use nixpkgs + "/path" to coerce the flake input to its store path.
+      # Using nixpkgs.path doesn't work on remote flake inputs.
+      sdImageModule = import (nixpkgs + "/nixos/modules/installer/sd-card/sd-image.nix");
+
       # Supported systems for this flake
       systems = [
         "x86_64-linux"
@@ -32,6 +36,7 @@
             {
               nixpkgs.overlays = [ odroidOverlay ];
             }
+            sdImageModule
           ]
           ++ (args.modules or [ ]);
         };
@@ -85,6 +90,7 @@
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
                 }
+                sdImageModule
               ];
             }).config.system.build.sdImage;
 
@@ -104,6 +110,7 @@
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
                 }
+                sdImageModule
               ];
             }).config.system.build.toplevel;
         }
@@ -181,13 +188,14 @@
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
                 }
+                sdImageModule
               ];
             }
           );
         in
         {
           # Validate the configuration evaluates correctly
-          nixosConfig = cfg;
+          nixosConfig = cfg.config.system.build.toplevel;
         }
       );
     };

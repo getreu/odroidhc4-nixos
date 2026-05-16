@@ -20,7 +20,13 @@
 #   zstd -d result/nixos-sd-image-*.img.zst -o odroid-hc4.img
 #   sudo dd if=odroid-hc4.img of=/dev/sdX bs=4M conv=fsync status=progress
 
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  nixpkgs,
+  ...
+}:
 
 let
   # U-Boot for Odroid HC4 — same Amlogic SM1/S905X3 (G12A) SoC as C4
@@ -108,7 +114,7 @@ in
   );
 
   # Watchdog to prevent freezes
-  systemd.watchdog.runtimeTime = lib.mkDefault "1min";
+  systemd.settings.Manager.RuntimeWatchdogSec = lib.mkDefault 60;
 
   # ============================================================
   # SD image configuration
@@ -122,18 +128,16 @@ in
   fileSystems."/boot/firmware" = {
     device = "/dev/disk/by-label/FIRMWARE";
     fsType = "vfat";
-    options = [ "nofail" "noauto" ];
+    options = [
+      "nofail"
+      "noauto"
+    ];
   };
 
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIXOS_SD";
     fsType = "ext4";
   };
-
-  # Import the sd-image module from upstream NixOS 25.11
-  imports = [
-    "${pkgs.path}/nixos/modules/installer/sd-card/sd-image.nix"
-  ];
 
   sdImage = {
     # Firmware partition: U-Boot + boot script + kernel + DTB + initrd
@@ -183,7 +187,7 @@ in
   # ============================================================
   users.users.root.initialPassword = "nixos";
   services.openssh.enable = true;
-  services.openssh.permitRootLogin = "yes";
+  services.openssh.settings.PermitRootLogin = "yes";
 
   # ============================================================
   # System settings

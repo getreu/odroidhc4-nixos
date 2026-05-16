@@ -29,7 +29,7 @@ let
     };
 
     nativeBuildInputs = with prev.buildPackages; [
-      gcc49
+      gcc
       git
       hostname
     ];
@@ -75,7 +75,7 @@ let
     nativeBuildInputs = with prev.buildPackages; [
       git
       hostname
-      gcc49
+      gcc
     ];
 
     postPatch = ''
@@ -166,7 +166,7 @@ let
         ];
 
         depsBuildBuild = with prev.buildPackages; [
-          gcc49
+          gcc
           stdenv.cc
         ];
 
