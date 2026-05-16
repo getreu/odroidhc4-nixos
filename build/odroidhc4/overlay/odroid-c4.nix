@@ -17,7 +17,7 @@ final: prev:
 let
   # Meson64 tools: proprietary tools for Amlogic Meson ARM64 platforms
   # Used by ubootOdroidC4 to sign and pack firmware blobs
-  meson64-tools = prev.stdenv.mkDerivation rec {
+  meson64-tools = prev.buildPackages.stdenv.mkDerivation rec {
     pname = "meson64-tools";
     version = "unstable-2020-08-03";
 
@@ -34,7 +34,7 @@ let
       hostname
     ];
 
-    buildInputs = with prev; [
+    buildInputs = with prev.buildPackages; [
       openssl
       bison
       yacc
@@ -51,7 +51,7 @@ let
 
     makeFlags = [ "PREFIX=$(out)/bin" ];
 
-    meta = with prev.lib; {
+    meta = with prev.buildPackages.lib; {
       homepage = "https://github.com/angerman/meson64-tools";
       description = "Tools for Amlogic Meson ARM64 platforms";
       license = licenses.unfree;
@@ -61,7 +61,7 @@ let
 
   # Hardkernel firmware for Odroid C4/HC4 (Amlogic G12A SoC)
   # Provides BL2, BL30, BL31, BL33 binaries and DDR firmware needed for U-Boot FIP
-  firmwareOdroidC4 = prev.stdenv.mkDerivation rec {
+  firmwareOdroidC4 = prev.buildPackages.stdenv.mkDerivation rec {
     pname = "firmware-odroid-c4";
     version = "2015.01";
 
@@ -107,7 +107,7 @@ let
       cp sd_fuse/sd_fusing.sh                                       $out/
     '';
 
-    meta = with prev.lib; {
+    meta = with prev.buildPackages.lib; {
       homepage = "https://www.hardkernel.com/";
       description = "Hardkernel firmware for Odroid C4/HC4 (G12A SoC)";
       license = licenses.unfreeRedistributableFirmware;
@@ -131,7 +131,7 @@ let
       extraMeta ? { },
       ...
     }@args:
-    prev.stdenv.mkDerivation (
+    prev.buildPackages.stdenv.mkDerivation (
       {
         pname = "uboot-${defconfig}";
         version = if src == null then "2022.01" else version;
@@ -145,20 +145,13 @@ let
           else
             src;
 
-        patches =
-          with prev;
-          [
-            "${./0001-configs-rpi-allow-for-bigger-kernels.patch}"
-            "${./0001-rpi-Copy-properties-from-firmware-dtb-to-the-loaded-.patch}"
-          ]
-          ++ extraPatches;
+        patches = extraPatches;
 
         postPatch = ''
           patchShebangs tools
-          patchShebangs arch/arm/mach-rockchip
         '';
 
-        nativeBuildInputs = with prev; [
+        nativeBuildInputs = with prev.buildPackages; [
           bc
           bison
           dtc
@@ -182,7 +175,7 @@ let
 
         makeFlags = [
           "DTC=dtc"
-          "CROSS_COMPILE=${prev.stdenv.cc.targetPrefix}"
+          "CROSS_COMPILE=${prev.buildPackages.stdenv.cc.targetPrefix}"
         ]
         ++ extraMakeFlags;
 
@@ -209,7 +202,7 @@ let
         dontStrip = true;
 
         meta =
-          with prev.lib;
+          with prev.buildPackages.lib;
           {
             homepage = "http://www.denx.de/wiki/U-Boot/";
             description = "Boot loader for embedded systems";

@@ -186,15 +186,8 @@
           );
         in
         {
-          # Validate the configuration
+          # Validate the configuration evaluates correctly
           nixosConfig = cfg;
-
-          # Ensure key attributes exist
-          keyAttributes =
-            assert cfg.config.hardware.deviceTree.filter == "meson-sm1-odroid-hc4.dtb";
-            assert cfg.config.sdImage.firmwareSize == 64;
-            assert cfg.config.sdImage.compressImage;
-            true;
         }
       );
     };

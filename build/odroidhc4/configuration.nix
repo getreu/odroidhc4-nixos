@@ -13,19 +13,14 @@
 #   4. boot.scr loads kernel, initrd, and DTB, then boots via booti
 #
 # Build with flake:
-#   cd "Armbin2Nixos migration"
+#   cd "Armbian2Nixos migration"
 #   nix build .#nixosConfigurations.odroid-hc4.config.system.build.sdImage
 #
 # Flash to SD card:
 #   zstd -d result/nixos-sd-image-*.img.zst -o odroid-hc4.img
 #   sudo dd if=odroid-hc4.img of=/dev/sdX bs=4M conv=fsync status=progress
 
-{
-  config,
-  lib,
-  pkgs,
-  ...
-}:
+{ config, lib, pkgs, ... }:
 
 let
   # U-Boot for Odroid HC4 — same Amlogic SM1/S905X3 (G12A) SoC as C4
@@ -83,7 +78,7 @@ in
   # ============================================================
   # Hardware-specific settings (Odroid HC4)
   # ============================================================
-  hardware.deviceTree.filter = dtbFilter;
+  hardware.deviceTree.filter = [ dtbFilter ];
 
   # Fan control (required for proper cooling)
   # Uses thermal_zone0 to control pwm-fan via pwm1
@@ -122,19 +117,23 @@ in
   #   - Partition 1: 64 MiB FAT32 (FIRMWARE) — u-boot.bin, boot.scr, Image, DTB, initrd
   #   - Partition 2: ext4 (NIXOS_SD) — NixOS root with extlinux boot config
   # ============================================================
+
+  # Filesystems
   fileSystems."/boot/firmware" = {
     device = "/dev/disk/by-label/FIRMWARE";
     fsType = "vfat";
-    options = [
-      "nofail"
-      "noauto"
-    ];
+    options = [ "nofail" "noauto" ];
   };
 
   fileSystems."/" = {
     device = "/dev/disk/by-label/NIXOS_SD";
     fsType = "ext4";
   };
+
+  # Import the sd-image module from upstream NixOS 25.11
+  imports = [
+    "${pkgs.path}/nixos/modules/installer/sd-card/sd-image.nix"
+  ];
 
   sdImage = {
     # Firmware partition: U-Boot + boot script + kernel + DTB + initrd
@@ -164,8 +163,8 @@ in
     '';
 
     # Partition settings
-    firmwarePartitionOffset = 8; # 8 MiB gap for U-Boot SPL
-    firmwareSize = 64; # 64 MiB for u-boot + kernel + initrd
+    firmwarePartitionOffset = 8;
+    firmwareSize = 64;
     firmwarePartitionName = "FIRMWARE";
     firmwarePartitionID = "0x2178694e";
 
