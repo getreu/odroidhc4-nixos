@@ -74,12 +74,12 @@ let
     nativeBuildInputs = with prev.buildPackages; [
       git
       hostname
-      gcc
+      gcc13
     ];
 
     postPatch = ''
-      substituteInPlace ./arch/arm/cpu/armv8/g12a/firmware/scp_task/Makefile \
-        --replace "CROSS_COMPILE" "CROSS_COMPILE_32"
+      # Replace all /bin/pwd references with pwd for Nix sandbox compatibility
+      find . -name "*.mk" -o -name "Makefile" | xargs sed -i 's|/bin/pwd|pwd|g'
     '';
 
     buildFlags = [

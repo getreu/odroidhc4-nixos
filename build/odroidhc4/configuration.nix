@@ -46,7 +46,7 @@ let
   ramdisk_addr = "0x11800000";
 
   # Generate boot.scr from boot.cmd using mkimage
-  bootScript = pkgs.runCommandLocal "boot.scr" { } ''
+  bootScript = pkgs.runCommand "boot.scr" { } ''
     ${mkimage}/bin/mkimage -A arm64 -O linux -T script -C none \
       -a 0 -e 0 \
       -n "NixOS Odroid HC4" \

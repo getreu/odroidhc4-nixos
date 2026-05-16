@@ -35,6 +35,7 @@
             ./configuration.nix
             {
               nixpkgs.overlays = [ odroidOverlay ];
+              nixpkgs.config.allowUnfree = true;
             }
             sdImageModule
           ]
@@ -89,6 +90,7 @@
                 ./configuration.nix
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
+                  nixpkgs.config.allowUnfree = true;
                 }
                 sdImageModule
               ];
@@ -109,6 +111,7 @@
                 ./configuration.nix
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
+                  nixpkgs.config.allowUnfree = true;
                 }
                 sdImageModule
               ];
@@ -187,6 +190,7 @@
                 ./configuration.nix
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
+                  nixpkgs.config.allowUnfree = true;
                 }
                 sdImageModule
               ];
