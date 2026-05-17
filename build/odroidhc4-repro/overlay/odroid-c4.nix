@@ -8,9 +8,10 @@
 # C4 defconfig and blobs work for both boards.
 #
 # Cross-compilation support:
+# - On x86_64 hosts, uses pkgsCross.aarch64-multiplatform.stdenv to cross-compile U-Boot for aarch64
+# - On aarch64 hosts (native), uses the native stdenv
 # - Host tools (aml_encrypt_g12a, acs_tool.py, blx_fix.sh) are fetched via buildPackages
-#   so they work on x86_64 build hosts even when cross-compiling for aarch64
-# - buildUBoot handles cross-compilation automatically via crossSystem
+#   so they work on the build host regardless of target architecture
 
 final: prev: {
   # Firmware blobs for Amlogic G12A (S905X3) from LibreELEC/amlogic-boot-fip
@@ -31,12 +32,19 @@ final: prev: {
 
   # Build U-Boot for Odroid C4/HC4 from source with proper FIP assembly.
   # Works for both native aarch64 builds and cross-compilation from x86_64.
-  # crossSystemConfig is set so standalone U-Boot builds (nix build .#u-boot)
-  # know to cross-compile for aarch64. When built as part of a cross-compiled
-  # NixOS system (sdImage), the NixOS-level nixpkgs.crossSystem takes precedence.
+  # For cross-compilation from x86_64, we pass a cross-compiled stdenv
+  # since buildUBoot does not accept crossSystem/crossSystemConfig parameters.
   u-boot-odroid-c4 = final.buildUBoot {
     pname = "u-boot-odroid-c4";
-    crossSystemConfig = "aarch64-unknown-linux-gnu";
+
+    # Use a cross-compiled stdenv when building on x86_64 hosts.
+    # When building on aarch64 or as part of a cross-compiled NixOS system,
+    # final.stdenv is already aarch64 so we fall through to the native stdenv.
+    stdenv =
+      if final.stdenv.hostPlatform.system == "x86_64-linux" then
+        final.pkgsCross.aarch64-multiplatform.stdenv
+      else
+        final.stdenv;
 
     meta.longDescription = ''
       Boot loader for the Hardkernel ODROID-C4/HC4.
