@@ -6,29 +6,6 @@ Build a **fully reproducible** NixOS SD image for the Odroid HC4 (and compatible
 where the bootloader is sourced from Hardkernel's official prebuilt firmware — not
 corrupted LibreELEC blobs, not hardcoded store paths.
 
----
-
-## The Problem We Solved
-
-The original approach used a **hardcoded Nix store path** for U-Boot:
-
-```nix
-# OLD: Not reproducible
-u-boot-armbian-hc4 = final.stdenv.mkDerivation {
-  enableSandbox = false;
-  installPhase = ''
-    cp /nix/store/yhq8qb5rlwg9mhi47mfpq149jh8m1mll-u-boot.bin $out/u-boot.bin
-  '';
-};
-```
-
-This only worked on one specific machine where that exact store path existed.
-
-A second attempt tried to **build U-Boot from source** using LibreELEC's `amlogic-boot-fip`
-blobs. But those blobs are **corrupted** (bad `acs.bin` and `bl2.bin` hashes).
-
----
-
 ## The Solution: Hardkernel Official Firmware
 
 We now use Hardkernel's **official prebuilt firmware** for the ODROID-C4:
@@ -105,23 +82,6 @@ nix build .#sdImage
 nix develop
 ```
 
----
-
-## Comparison: Before vs After
-
-| Aspect                | Original             | LibreELEC Build             | Hardkernel Firmware |
-| --------------------- | -------------------- | --------------------------- | ------------------- |
-| **U-Boot source**     | Hardcoded store path | LibreELEC blobs (corrupted) | Hardkernel official |
-| **Reproducibility**   | ❌ Machine-specific  | ❌ Corrupted blobs          | ✅ Hash-verified    |
-| **Sandbox**           | Disabled             | Enabled                     | ✅ Fully enabled    |
-| **Dependencies**      | None (host path)     | 7+ build tools              | 0 build tools       |
-| **Cross-compilation** | N/A                  | Required                    | ❌ Not needed       |
-| **Lines of code**     | 10                   | 140                         | **51**              |
-| **Build time**        | Instant              | 15-30 min                   | **~5 sec**          |
-| **Output hash**       | Varies               | Varies (corrupted)          | ✅ Fixed            |
-
----
-
 ## Architecture
 
 The Odroid HC4 uses the **Amlogic G12A (S905X3)** SoC, which requires a specialized
@@ -154,7 +114,8 @@ No assembly needed. No encryption needed. Just copy and boot.
 The SD card flashing procedure:
 
 ```bash
-sudo dd if=u-boot.bin of=/dev/mmcblk0 conv=fsync,notrunc bs=512 seek=1
+lsblk
+sudo dd if=u-boot.bin of=/dev/<SDCARD> conv=fsync,notrunc bs=512 seek=1
 ```
 
 NixOS SD images handle this automatically via the `sdImage` module.
@@ -204,30 +165,9 @@ sha256sum result/u-boot.bin
 
 If the hash doesn't match, the build is using corrupted data.
 
----
-
-## History
-
-### Phase 1: Hardcoded store path
-
-Original approach from `considerate/nixos-odroidhc4` fork. Only worked on one machine.
-
-### Phase 2: LibreELEC blob assembly
-
-Attempted to build from source using `LibreELEC/amlogic-boot-fip` at a fixed commit.
-Discovered the blobs are corrupted (`acs.bin` byte 5 = `0xf6` instead of `0x06`).
-Required patches and workarounds. 140 lines of complex build logic.
-
-### Phase 3: Hardkernel official firmware (current)
-
-Found Hardkernel's official prebuilt firmware. 51 lines. Zero build dependencies.
-Fully reproducible. Hash-verified. Production-ready.
-
----
-
-## Next Steps
+<!--## Next Steps
 
 1. **Test on real hardware** — flash the SD image to an Odroid HC4 and verify boot
 2. **Monitor Hardkernel** — check for newer firmware versions periodically
 3. **Consider packaging** — submit this overlay to `nixos-hardware` or `nixpkgs`
-4. **Document SD flashing** — add instructions for manual U-Boot flashing
+4. **Document SD flashing** — add instructions for manual U-Boot flashing-->
