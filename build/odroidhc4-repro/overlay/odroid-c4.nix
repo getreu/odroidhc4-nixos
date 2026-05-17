@@ -10,38 +10,27 @@
 
 let
   overlayDir = ./.;
+  blobTarball = overlayDir + "/../blob/u-boot-odroidc4-189.tar.gz";
 in
 final: prev: {
-  # Source tarball — Hardkernel's official prebuilt firmware package
-  #
-  # This is the prebuilt tarball released by Hardkernel containing the
-  # final, properly assembled FIP image. No assembly or encryption needed.
-  #
-  # Source: https://github.com/hardkernel/odroid-c4/releases/tag/u-boot-v1.89
-  # Released: 2021 (rev 1.89)
-  #
-  # Local copy for offline builds (hash computed from local tarball)
-  u-boot-odroid-c4-src = final.fetchurl {
-    pname = "u-boot-odroidc4-189.tar.gz";
-    version = "189";
-    url = overlayDir + "/../blob/u-boot-odroidc4-189.tar.gz";
-    sha256 = "0g6vxb8r5l4mp8swrq2w0jqqps0x2m4w0snw8qym818m969yv547";
-  };
-
   # U-Boot package — produces u-boot.bin ready for SD card flashing.
   #
   # Extracts the prebuilt FIP image (872,304 bytes) from Hardkernel's
-  # official tarball. Already properly assembled — no encryption or
-  # blob assembly required.
+  # official tarball (stored locally in blob/). Already properly assembled —
+  # no download or encryption required.
   u-boot-odroid-c4 = final.stdenv.mkDerivation {
     pname = "u-boot-odroid-c4";
     version = "189";
 
-    src = final.u-boot-odroid-c4-src;
+    # Use local tarball directly as source
+    src = blobTarball;
+
+    # Unpack the tarball before copying
+    unpackPhase = "tar xzf $src";
 
     installPhase = ''
       mkdir -p $out
-      cp $src/sd_fuse/u-boot.bin $out/u-boot.bin
+      cp sd_fuse/u-boot.bin $out/u-boot.bin
     '';
 
     dontConfigure = true;
