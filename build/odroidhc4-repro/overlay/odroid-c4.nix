@@ -29,14 +29,14 @@ final: prev: {
     meta.license = final.lib.licenses.unfreeRedistributableFirmware;
   };
 
-  # Build U-Boot for Odroid C4/HC4 from source with proper FIP assembly
-  # This works for both native aarch64 builds and cross-compilation from x86_64
   # Build U-Boot for Odroid C4/HC4 from source with proper FIP assembly.
   # Works for both native aarch64 builds and cross-compilation from x86_64.
-  # Nixpkgs 25.11+ buildUBoot handles crossSystem automatically — no need
-  # to set crossSystemConfig manually (that attribute is deprecated).
+  # crossSystemConfig is set so standalone U-Boot builds (nix build .#u-boot)
+  # know to cross-compile for aarch64. When built as part of a cross-compiled
+  # NixOS system (sdImage), the NixOS-level nixpkgs.crossSystem takes precedence.
   u-boot-odroid-c4 = final.buildUBoot {
     pname = "u-boot-odroid-c4";
+    crossSystemConfig = "aarch64-unknown-linux-gnu";
 
     meta.longDescription = ''
       Boot loader for the Hardkernel ODROID-C4/HC4.
@@ -53,9 +53,16 @@ final: prev: {
     defconfig = "odroid-c4_defconfig";
 
     # G12A (S905X3) requires ATF for BL31 and encrypted boot blobs.
-    # Host tools (aml_encrypt_g12a, acs_tool.py, blx_fix.sh) run on the
-    # build host, so we reference them via buildPackages for cross-compilation.
-    nativeBuildInputs = with final.buildPackages; [ python3 ];
+    # Host tools needed during the build (not for the target):
+    # - bison/flex: U-Boot's config parser generator (HOSTCC tools)
+    # - python3: acs_tool.py and related build scripts
+    # make is provided by stdenv and does not need to be listed.
+    # These must come from buildPackages for proper cross-compilation.
+    nativeBuildInputs = with final.buildPackages; [
+      bison
+      flex
+      python3
+    ];
 
     postBuild = ''
       # Copy firmware blobs and host tools from buildPackages.
