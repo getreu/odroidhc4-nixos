@@ -29,18 +29,8 @@ let
       ''} $out
   '';
 
-  # Armbian ships U-Boot at this path on the HC4.
-  # stdenv.mkDerivation with enableSandbox = false allows the build to
-  # read from the host filesystem path /usr/lib/linux-u-boot-current-odroidhc4/.
-  armbianUboot = pkgs.stdenv.mkDerivation {
-    name = "armbian-uboot-hc4";
-    enableSandbox = false;
-    unpackPhase = "true";
-    buildPhase = ''
-      cp /usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin $out/u-boot.bin
-    '';
-    installPhase = "true";
-  };
+  # U-Boot binary from Armbian, provided by the odroid-c4 overlay.
+  armbianUboot = pkgs.u-boot-armbian-hc4;
 
 in
 

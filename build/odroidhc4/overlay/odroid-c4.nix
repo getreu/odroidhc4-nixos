@@ -1,11 +1,22 @@
-# Self-contained Nixpkgs overlay for Odroid C4/HC4 support
+# Self-contained NixOS overlay for Odroid C4/HC4 U-Boot support
 #
-# NixOS 25.11 provides built-in support for Odroid C4/HC4 via:
-#   - Upstream U-Boot with odroid-c4_defconfig support
-#   - Device tree: meson-sm1-odroid-hc4.dtb
-#   - SD image module that handles firmware partition population
+# Wraps the Armbian U-Boot binary into a proper Nix derivation using
+# stdenv.mkDerivation with enableSandbox = false.  This allows the
+# builder to access the hardcoded Nix store path that was added with
+# `nix-store --add-fixed sha256`.
 #
-# This overlay is intentionally empty — no custom U-Boot, meson64-tools,
-# or firmware derivations are needed. The sd-image module handles everything.
+# The u-boot.bin file must already be present in the Nix store at
+# /nix/store/yhq8qb5rlwg9mhi47mfpq149jh8m1mll-u-boot.bin on the
+# build host (the Odroid HC4 running Armbian).
 
-final: prev: { }
+final: prev: {
+  u-boot-armbian-hc4 = final.stdenv.mkDerivation {
+    name = "u-boot-armbian-hc4";
+    enableSandbox = false;
+    phases = [ "installPhase" ];
+    installPhase = ''
+      mkdir -p $out
+      cp /nix/store/yhq8qb5rlwg9mhi47mfpq149jh8m1mll-u-boot.bin $out/u-boot.bin
+    '';
+  };
+}
