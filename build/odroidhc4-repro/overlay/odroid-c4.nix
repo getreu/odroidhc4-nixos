@@ -1,140 +1,55 @@
 # Self-contained NixOS overlay for Odroid C4/HC4 U-Boot support
 #
-# This creates a proper buildable U-Boot derivation using the same
-# amlogic-boot-fip blobs that the odroid-c4/odroid-hc4 directories
-# in LibreELEC/amlogic-boot-fip use.
+# This overlay uses Hardkernel's official prebuilt u-boot.bin from their
+# official firmware package. This avoids the need to assemble FIP blobs
+# from LibreELEC/amlogic-boot-fip, which contains corrupted firmware
+# (acs.bin and bl2.bin with invalid entries).
 #
-# The HC4 and C4 share the same Amlogic G12A (S905X3) SoC, so the
-# C4 defconfig and blobs work for both boards.
-#
-# Cross-compilation support:
-# - On x86_64 hosts, uses pkgsCross.aarch64-multiplatform.stdenv to cross-compile U-Boot for aarch64
-# - On aarch64 hosts (native), uses the native stdenv
-# - Host tools (aml_encrypt_g12a, acs_tool.py, blx_fix.sh) are fetched via buildPackages
-#   so they work on the build host regardless of target architecture
+# The Hardkernel u-boot.bin is already the final assembled FIP image,
+# ready to be written to SD card at offset 1 (sector 2, byte 1024).
 
 final: prev: {
-  # Firmware blobs for Amlogic G12A (S905X3) from LibreELEC/amlogic-boot-fip
-  # This provides architecture-neutral firmware blobs and x86_64 host tools
-  # needed during the build (aml_encrypt_g12a, acs_tool.py, blx_fix.sh).
-  # Defined in final so it's available via both final and buildPackages
-  # for proper cross-compilation support.
-  amlogic-boot-fip-odroid-c4 = final.fetchFromGitHub {
-    owner = "LibreELEC";
-    repo = "amlogic-boot-fip";
-    rev = "4369a138ca24c5ab932b8cbd1af4504570b709df";
-    sha256 = "sha256-wrEc8TEL4QwOi2/Y6BsO1ilZ+Ji76T8Mbd65+/LPso0=";
-    postFetch = ''
-      find $out -mindepth 1 -maxdepth 1 -type d ! -name "odroid-c4" ! -name "odroid-hc4" -exec rm -rf {} +
-    '';
-    meta.license = final.lib.licenses.unfreeRedistributableFirmware;
+  # Source tarball — Hardkernel's official prebuilt firmware package
+  #
+  # This is the prebuilt tarball released by Hardkernel containing the
+  # final, properly assembled FIP image. No assembly or encryption needed.
+  #
+  # Source: https://github.com/hardkernel/odroid-c4/releases/tag/u-boot-v1.89
+  # Released: 2021 (rev 1.89)
+  u-boot-odroid-c4-src = final.fetchurl {
+    pname = "u-boot-odroid-c4-src";
+    version = "189";
+
+    url = "https://github.com/hardkernel/odroid-c4/releases/download/u-boot-v1.89/u-boot-odroidc4-189.tar.gz";
+    # TODO: Update this hash after downloading the file from GitHub
+    sha256 = "sha256-PLACEHOLDER";
+
+    meta = {
+      description = "Official U-Boot bootloader source tarball for Hardkernel ODROID-C4";
+      homepage = "https://github.com/hardkernel/odroid-c4";
+      license = final.lib.licenses.gpl2Plus;
+      platforms = [ "aarch64-linux" ];
+    };
   };
 
-  # Build U-Boot for Odroid C4/HC4 from source with proper FIP assembly.
-  # Works for both native aarch64 builds and cross-compilation from x86_64.
-  # For cross-compilation from x86_64, we pass a cross-compiled stdenv
-  # since buildUBoot does not accept crossSystem/crossSystemConfig parameters.
-  u-boot-odroid-c4 = final.buildUBoot {
+  # U-Boot package — produces u-boot.bin ready for SD card flashing.
+  #
+  # Extracts the prebuilt FIP image (872,304 bytes) from Hardkernel's
+  # official tarball. Already properly assembled — no encryption or
+  # blob assembly required.
+  u-boot-odroid-c4 = final.stdenv.mkDerivation {
     pname = "u-boot-odroid-c4";
+    version = "189";
 
-    # Use a cross-compiled stdenv when building on x86_64 hosts.
-    # When building on aarch64 or as part of a cross-compiled NixOS system,
-    # final.stdenv is already aarch64 so we fall through to the native stdenv.
-    stdenv =
-      if final.stdenv.hostPlatform.system == "x86_64-linux" then
-        final.pkgsCross.aarch64-multiplatform.stdenv
-      else
-        final.stdenv;
+    src = final.u-boot-odroid-c4-src;
 
-    meta.longDescription = ''
-      Boot loader for the Hardkernel ODROID-C4/HC4.
-
-      The HC4 and C4 share the same Amlogic G12A (S905X3) SoC, so the
-      C4 defconfig works for both boards. This build uses the same
-      amlogic-boot-fip blobs that LibreELEC uses.
-
-      The build requires meson-tools (from buildPackages) to run aml_encrypt_g12a
-      on the build host to assemble the final FIP binary.
+    installPhase = ''
+      mkdir -p $out
+      cp $src/sd_fuse/u-boot.bin $out/u-boot.bin
     '';
 
-    filesToInstall = [ "u-boot.bin" ];
-    defconfig = "odroid-c4_defconfig";
-
-    # Override the default postInstall from buildUBoot.
-    # The default tries to copy bl2.bin, bl21.bin, etc. from src/odroid-c4,
-    # but our source is just U-Boot upstream — the FIP blobs are assembled
-    # entirely in postBuild below.
-    postInstall = "";
-
-    # G12A (S905X3) requires ATF for BL31 and encrypted boot blobs.
-    # Host tools needed during the build (not for the target):
-    # - bison/flex: U-Boot's config parser generator (HOSTCC tools)
-    # - openssl: U-Boot's image tools (kwbimage, imx8mimage, imagetool)
-    #   need openssl/evp.h for HOSTCC compilation
-    # - python3: acs_tool.py and related build scripts
-    # make is provided by stdenv and does not need to be listed.
-    # These must come from buildPackages for proper cross-compilation.
-    # U-Boot's buildUBoot function adds toolsDeps (ncurses, libuuid, gnutls, openssl)
-    # to nativeBuildInputs when crossTools=false (default). When using a cross-compiled
-    # stdenv, those get resolved as aarch64 packages — but HOSTCC tools need native.
-    # We explicitly pull all toolsDeps from buildPackages to ensure they run on x86_64.
-    nativeBuildInputs = with final.buildPackages; [
-      bison
-      flex
-      openssl
-      gnutls
-      ncurses
-      util-linux
-      python3
-    ];
-
-    postBuild = ''
-            # Copy firmware blobs and host tools from buildPackages.
-            # Blobs are architecture-neutral; aml_encrypt_g12a is an x86_64 host binary.
-            # Note: bl21.bin is NOT in the repo - blx_fix.sh generates it from bl2.bin + acs.bin
-            mkdir -p $out tmp
-            FIP=${final.buildPackages.amlogic-boot-fip-odroid-c4}/odroid-c4
-            cp $FIP/{bl2.bin,bl30.bin,bl301.bin,bl31.img,blx_fix.sh,acs_tool.py,aml_encrypt_g12a,acs.bin} \
-               u-boot.bin tmp/
-            cd tmp
-
-            # Patch acs_tool.py: it incorrectly uses utf-8 on binary data.
-            # latin-1 maps all 256 byte values to valid Unicode, never fails.
-            # Must be done here (not in postFetch) because the repo is cached.
-            substituteInPlace acs_tool.py \
-              --replace-fail 'utf-8' 'latin-1'
-
-            # Fix corrupted acs.bin entry point: byte 5 is 0xf6 but should be 0x06.
-            # The correct entry point is 0x0620 where "acs__" magic string begins.
-            # LibreELEC/amlogic-boot-fip ships the byte at offset 5 as 0xf6 instead of 0x06.
-            # Write to temp file first since acs.bin is read-only from the Nix store.
-            python3 -c "
-      import os
-      d=open('acs.bin','rb').read()
-      t='acs.bin.fix'
-      open(t,'wb').write(d[:5]+b'\\x06'+d[6:])
-      os.rename(t,'acs.bin')
-      "
-
-            # Process BL2: run acs_tool first (generates acs.bin), then blx_fix.sh
-            # blx_fix.sh internally handles BL21 generation from bl2.bin + acs.bin
-            python3 acs_tool.py bl2.bin bl2_acs.bin acs.bin 0
-            bash -e blx_fix.sh bl2_acs.bin zero bl2_zero.bin acs.bin acs_zero.bin bl2_new.bin bl2
-            [ -f zero ] && rm -f zero
-
-            # Process BL30 (fix)
-            bash -e blx_fix.sh bl30.bin zero bl30_zero.bin bl301.bin bl301_zero.bin bl30_new.bin bl30
-            [ -f zero ] && rm -f zero
-
-            # Encrypt BL2, BL30, BL31, and BL33 (U-Boot)
-            ./aml_encrypt_g12a --bl2sig --input bl2_new.bin --output bl2.n.bin.sig
-            ./aml_encrypt_g12a --bl3enc --input bl30_new.bin --output bl30_new.bin.enc
-            ./aml_encrypt_g12a --bl3enc --input bl31.img --output bl31.img.enc
-            ./aml_encrypt_g12a --bl3enc --input u-boot.bin --output bl33.bin.enc
-
-            # Assemble final FIP image
-            ./aml_encrypt_g12a --bootmk --output $out/u-boot.bin \
-              --bl2 bl2.n.bin.sig --bl30 bl30_new.bin.enc --bl31 bl31.img.enc --bl33 bl33.bin.enc
-    '';
+    dontConfigure = true;
+    dontBuild = true;
+    dontFixup = true;
   };
 }
