@@ -26,6 +26,11 @@ final: prev: {
     sha256 = "sha256-VZBd3vqNgA+7EIHoinnkury4cpeCCa4OeoP1HIaL6DI=";
     postFetch = ''
       find $out -mindepth 1 -maxdepth 1 -type d ! -name "odroid-c4" ! -name "odroid-hc4" -exec rm -rf {} +
+
+      # Fix acs_tool.py: it incorrectly uses utf-8 on binary data
+      # latin-1 maps all 256 byte values to valid Unicode, never fails on binary
+      substituteInPlace $out/odroid-c4/acs_tool.py \
+        --replace-fail 'utf-8' 'latin-1'
     '';
     meta.license = final.lib.licenses.unfreeRedistributableFirmware;
   };
