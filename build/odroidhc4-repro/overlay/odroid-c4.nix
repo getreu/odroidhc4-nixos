@@ -23,7 +23,7 @@ final: prev: {
     owner = "LibreELEC";
     repo = "amlogic-boot-fip";
     rev = "4369a138ca24c5ab932b8cbd1af4504570b709df";
-    sha256 = "sha256-VZBd3vqNgA+7EIHoinnkury4cpeCCa4OeoP1HIaL6DI=";
+    sha256 = "sha256-wrEc8TEL4QwOi2/Y6BsO1ilZ+Ji76T8Mbd65+/LPso0=";
     postFetch = ''
       find $out -mindepth 1 -maxdepth 1 -type d ! -name "odroid-c4" ! -name "odroid-hc4" -exec rm -rf {} +
     '';
