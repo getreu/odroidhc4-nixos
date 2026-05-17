@@ -8,12 +8,9 @@
   outputs =
     { self, nixpkgs }:
     let
-      # The overlay providing ubootOdroidC4, firmwareOdroidC4, and meson64-tools
+      # The overlay providing Odroid C4/HC4 U-Boot support
+      # NixOS 25.11 has built-in support, so this is intentionally empty
       odroidOverlay = import ./overlay/odroid-c4.nix;
-
-      # Use nixpkgs + "/path" to coerce the flake input to its store path.
-      # Using nixpkgs.path doesn't work on remote flake inputs.
-      sdImageModule = import (nixpkgs + "/nixos/modules/installer/sd-card/sd-image.nix");
 
       # Supported systems for this flake
       systems = [
@@ -30,14 +27,13 @@
           inherit system;
           specialArgs = {
             inherit nixpkgs odroidOverlay;
+            sdImageModule = import (nixpkgs + "/nixos/modules/installer/sd-card/sd-image.nix");
           };
           modules = [
             ./configuration.nix
             {
               nixpkgs.overlays = [ odroidOverlay ];
-              nixpkgs.config.allowUnfree = true;
             }
-            sdImageModule
           ]
           ++ (args.modules or [ ]);
         };
@@ -85,35 +81,31 @@
           sdImage =
             (nixpkgs.lib.nixosSystem {
               inherit system;
-              specialArgs = { inherit nixpkgs odroidOverlay; };
+              specialArgs = {
+                inherit nixpkgs odroidOverlay;
+                sdImageModule = import (nixpkgs + "/nixos/modules/installer/sd-card/sd-image.nix");
+              };
               modules = [
                 ./configuration.nix
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
-                  nixpkgs.config.allowUnfree = true;
                 }
-                sdImageModule
               ];
             }).config.system.build.sdImage;
-
-          # Individual components for reference
-          ubootOdroidC4 = pkgs.ubootOdroidC4;
-          firmwareOdroidC4 = pkgs.firmwareOdroidC4;
-          meson64-tools = pkgs.meson64-tools;
-          ubootTools = pkgs.ubootTools;
 
           # The system closure (for reference/debugging)
           configClosure =
             (nixpkgs.lib.nixosSystem {
               inherit system;
-              specialArgs = { inherit nixpkgs odroidOverlay; };
+              specialArgs = {
+                inherit nixpkgs odroidOverlay;
+                sdImageModule = import (nixpkgs + "/nixos/modules/installer/sd-card/sd-image.nix");
+              };
               modules = [
                 ./configuration.nix
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
-                  nixpkgs.config.allowUnfree = true;
                 }
-                sdImageModule
               ];
             }).config.system.build.toplevel;
         }
@@ -185,14 +177,15 @@
           cfg = (
             nixpkgs.lib.nixosSystem {
               inherit system;
-              specialArgs = { inherit nixpkgs odroidOverlay; };
+              specialArgs = {
+                inherit nixpkgs odroidOverlay;
+                sdImageModule = import (nixpkgs + "/nixos/modules/installer/sd-card/sd-image.nix");
+              };
               modules = [
                 ./configuration.nix
                 {
                   nixpkgs.overlays = [ odroidOverlay ];
-                  nixpkgs.config.allowUnfree = true;
                 }
-                sdImageModule
               ];
             }
           );
