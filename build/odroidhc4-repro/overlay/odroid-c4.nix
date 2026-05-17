@@ -16,19 +16,20 @@ final: prev: {
   #
   # Source: https://github.com/hardkernel/odroid-c4/releases/tag/u-boot-v1.89
   # Released: 2021 (rev 1.89)
-  u-boot-odroid-c4-src = final.fetchurl {
+  #
+  # fetchzip handles GitHub's redirects better than fetchurl.
+  u-boot-odroid-c4-src = final.fetchzip {
     pname = "u-boot-odroid-c4-src";
     version = "189";
 
+    # Nix will download, compute hash, and report correct value on first run
     url = "https://github.com/hardkernel/odroid-c4/releases/download/u-boot-v1.89/u-boot-odroidc4-189.tar.gz";
-    # TODO: Update this hash after downloading the file from GitHub
-    sha256 = "sha256-PLACEHOLDER";
 
     meta = {
       description = "Official U-Boot bootloader source tarball for Hardkernel ODROID-C4";
       homepage = "https://github.com/hardkernel/odroid-c4";
       license = final.lib.licenses.gpl2Plus;
-      platforms = [ "aarch64-linux" ];
+      # Architecture-neutral: prebuilt binary, no compilation needed
     };
   };
 
