@@ -89,40 +89,52 @@ final: prev: {
     ];
 
     postBuild = ''
-      # Copy firmware blobs and host tools from buildPackages.
-      # Blobs are architecture-neutral; aml_encrypt_g12a is an x86_64 host binary.
-      # Note: bl21.bin is NOT in the repo - blx_fix.sh generates it from bl2.bin + acs.bin
-      mkdir -p $out tmp
-      FIP=${final.buildPackages.amlogic-boot-fip-odroid-c4}/odroid-c4
-      cp $FIP/{bl2.bin,bl30.bin,bl301.bin,bl31.img,blx_fix.sh,acs_tool.py,aml_encrypt_g12a,acs.bin} \
-         u-boot.bin tmp/
-      cd tmp
+            # Copy firmware blobs and host tools from buildPackages.
+            # Blobs are architecture-neutral; aml_encrypt_g12a is an x86_64 host binary.
+            # Note: bl21.bin is NOT in the repo - blx_fix.sh generates it from bl2.bin + acs.bin
+            mkdir -p $out tmp
+            FIP=${final.buildPackages.amlogic-boot-fip-odroid-c4}/odroid-c4
+            cp $FIP/{bl2.bin,bl30.bin,bl301.bin,bl31.img,blx_fix.sh,acs_tool.py,aml_encrypt_g12a,acs.bin} \
+               u-boot.bin tmp/
+            cd tmp
 
-      # Patch acs_tool.py: it incorrectly uses utf-8 on binary data.
-      # latin-1 maps all 256 byte values to valid Unicode, never fails.
-      # Must be done here (not in postFetch) because the repo is cached.
-      substituteInPlace acs_tool.py \
-        --replace-fail 'utf-8' 'latin-1'
+            # Patch acs_tool.py: it incorrectly uses utf-8 on binary data.
+            # latin-1 maps all 256 byte values to valid Unicode, never fails.
+            # Must be done here (not in postFetch) because the repo is cached.
+            substituteInPlace acs_tool.py \
+              --replace-fail 'utf-8' 'latin-1'
 
-      # Process BL2: run acs_tool first (generates acs.bin), then blx_fix.sh
-      # blx_fix.sh internally handles BL21 generation from bl2.bin + acs.bin
-      python3 acs_tool.py bl2.bin bl2_acs.bin acs.bin 0
-      bash -e blx_fix.sh bl2_acs.bin zero bl2_zero.bin acs.bin acs_zero.bin bl2_new.bin bl2
-      [ -f zero ] && rm -f zero
+            # Fix corrupted acs.bin entry point: byte 5 is 0xf6 but should be 0x06.
+            # The correct entry point is 0x0620 where "acs__" magic string begins.
+            # LibreELEC/amlogic-boot-fip ships the byte at offset 5 as 0xf6 instead of 0x06.
+            # Write to temp file first since acs.bin is read-only from the Nix store.
+            python3 -c "
+      import os
+      d=open('acs.bin','rb').read()
+      t='acs.bin.fix'
+      open(t,'wb').write(d[:5]+b'\\x06'+d[6:])
+      os.rename(t,'acs.bin')
+      "
 
-      # Process BL30 (fix)
-      bash -e blx_fix.sh bl30.bin zero bl30_zero.bin bl301.bin bl301_zero.bin bl30_new.bin bl30
-      [ -f zero ] && rm -f zero
+            # Process BL2: run acs_tool first (generates acs.bin), then blx_fix.sh
+            # blx_fix.sh internally handles BL21 generation from bl2.bin + acs.bin
+            python3 acs_tool.py bl2.bin bl2_acs.bin acs.bin 0
+            bash -e blx_fix.sh bl2_acs.bin zero bl2_zero.bin acs.bin acs_zero.bin bl2_new.bin bl2
+            [ -f zero ] && rm -f zero
 
-      # Encrypt BL2, BL30, BL31, and BL33 (U-Boot)
-      ./aml_encrypt_g12a --bl2sig --input bl2_new.bin --output bl2.n.bin.sig
-      ./aml_encrypt_g12a --bl3enc --input bl30_new.bin --output bl30_new.bin.enc
-      ./aml_encrypt_g12a --bl3enc --input bl31.img --output bl31.img.enc
-      ./aml_encrypt_g12a --bl3enc --input u-boot.bin --output bl33.bin.enc
+            # Process BL30 (fix)
+            bash -e blx_fix.sh bl30.bin zero bl30_zero.bin bl301.bin bl301_zero.bin bl30_new.bin bl30
+            [ -f zero ] && rm -f zero
 
-      # Assemble final FIP image
-      ./aml_encrypt_g12a --bootmk --output $out/u-boot.bin \
-        --bl2 bl2.n.bin.sig --bl30 bl30_new.bin.enc --bl31 bl31.img.enc --bl33 bl33.bin.enc
+            # Encrypt BL2, BL30, BL31, and BL33 (U-Boot)
+            ./aml_encrypt_g12a --bl2sig --input bl2_new.bin --output bl2.n.bin.sig
+            ./aml_encrypt_g12a --bl3enc --input bl30_new.bin --output bl30_new.bin.enc
+            ./aml_encrypt_g12a --bl3enc --input bl31.img --output bl31.img.enc
+            ./aml_encrypt_g12a --bl3enc --input u-boot.bin --output bl33.bin.enc
+
+            # Assemble final FIP image
+            ./aml_encrypt_g12a --bootmk --output $out/u-boot.bin \
+              --bl2 bl2.n.bin.sig --bl30 bl30_new.bin.enc --bl31 bl31.img.enc --bl33 bl33.bin.enc
     '';
   };
 }
