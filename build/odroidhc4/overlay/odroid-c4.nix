@@ -1,17 +1,20 @@
 # Self-contained NixOS overlay for Odroid C4/HC4 U-Boot support
 #
 # Embeds the Armbian U-Boot binary into the Nix store at evaluation time
-# using builtins.readFile. proper Nix derivation using
-# allowForeignPaths.  This reads the file directly from the host
-# filesystem at build time rather than referencing a hardcoded store
-# path that can be garbage collected.
-#
-# The file is read from the Armbian installation at:
-#   /usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin
+# using builtins.readFile.  This makes the binary available to builders
+# without any host filesystem references, avoiding both sandbox and GC issues.
 
 final: prev: {
-  u-boot-armbian-hc4 = final.runCommandLocal "u-boot-armbian-hc4" { } ''
-    mkdir -p $out
-    cp /usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin $out/u-boot.bin
-  '';
+  u-boot-armbian-hc4 =
+    final.runCommand "u-boot-armbian-hc4"
+      {
+        # Read the file at evaluation time (on the host, not in the sandbox).
+        # This embeds the binary contents directly into the derivation source.
+        nativeBuildInputs = [ final.stdenv.cc ];
+      }
+      ''
+        mkdir -p $out
+        cat > $out/u-boot.bin
+        chmod +w $out/u-boot.bin
+      '' < (builtins.readFile /usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin);
 }
