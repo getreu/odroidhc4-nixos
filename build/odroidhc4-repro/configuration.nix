@@ -16,18 +16,23 @@ let
   # Generate boot.scr from boot.cmd using mkimage
   # runCommandLocal ensures this builds on the build machine (no sandbox)
   # where mkimage is available from ubootTools
-  bootScript = pkgs.runCommandLocal "boot.scr" { } ''
-    ${pkgs.ubootTools}/bin/mkimage -A arm64 -O linux -T script -C none \
-      -a 0 -e 0 \
-      -n "NixOS Odroid HC4" \
-      -d ${pkgs.writeText "boot.cmd" ''
-        setenv bootargs "console=ttyS0,115200n8 console=tty0 root=/dev/mmcblk0p2 rw rootwait rootfstype=ext4"
-        load mmc 0:1 ${kernelAddr} Image
-        load mmc 0:1 ${fdtAddr} ${dtbFile}
-        load mmc 0:1 ${ramdiskAddr} initrd
-        booti ${kernelAddr} ${ramdiskAddr} ${fdtAddr}
-      ''} $out
-  '';
+  bootScript =
+    pkgs.runCommand "boot.scr"
+      {
+        nativeBuildInputs = [ pkgs.ubootTools ];
+      }
+      ''
+        mkimage -A arm64 -O linux -T script -C none \
+          -a 0 -e 0 \
+          -n "NixOS Odroid HC4" \
+          -d ${pkgs.writeText "boot.cmd" ''
+            setenv bootargs "console=ttyS0,115200n8 console=tty0 root=/dev/mmcblk0p2 rw rootwait rootfstype=ext4"
+            load mmc 0:1 ${kernelAddr} Image
+            load mmc 0:1 ${fdtAddr} ${dtbFile}
+            load mmc 0:1 ${ramdiskAddr} initrd
+            booti ${kernelAddr} ${ramdiskAddr} ${fdtAddr}
+          ''} $out
+      '';
 
 in
 
