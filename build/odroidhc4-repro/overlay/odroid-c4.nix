@@ -85,15 +85,17 @@ final: prev: {
     postBuild = ''
       # Copy firmware blobs and host tools from buildPackages.
       # Blobs are architecture-neutral; aml_encrypt_g12a is an x86_64 host binary.
+      # Note: bl21.bin is NOT in the repo - blx_fix.sh generates it from bl2.bin + acs.bin
       mkdir -p $out tmp
       FIP=${final.buildPackages.amlogic-boot-fip-odroid-c4}/odroid-c4
-      cp $FIP/{bl2.bin,bl21.bin,bl30.bin,bl301.bin,bl31.img,blx_fix.sh,acs_tool.py,aml_encrypt_g12a} \
+      cp $FIP/{bl2.bin,bl30.bin,bl301.bin,bl31.img,blx_fix.sh,acs_tool.py,aml_encrypt_g12a,acs.bin} \
          u-boot.bin tmp/
       cd tmp
 
-      # Process BL2 (sign + fix)
+      # Process BL2: run acs_tool first (generates acs.bin), then blx_fix.sh
+      # blx_fix.sh internally handles BL21 generation from bl2.bin + acs.bin
       python3 acs_tool.py bl2.bin bl2_acs.bin acs.bin 0
-      bash -e blx_fix.sh bl2_acs.bin zero bl2_zero.bin bl21.bin bl21_zero.bin bl2_new.bin bl2
+      bash -e blx_fix.sh bl2_acs.bin zero bl2_zero.bin acs.bin acs_zero.bin bl2_new.bin bl2
       [ -f zero ] && rm -f zero
 
       # Process BL30 (fix)
