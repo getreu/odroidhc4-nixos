@@ -26,11 +26,6 @@ final: prev: {
     sha256 = "sha256-VZBd3vqNgA+7EIHoinnkury4cpeCCa4OeoP1HIaL6DI=";
     postFetch = ''
       find $out -mindepth 1 -maxdepth 1 -type d ! -name "odroid-c4" ! -name "odroid-hc4" -exec rm -rf {} +
-
-      # Fix acs_tool.py: it incorrectly uses utf-8 on binary data
-      # latin-1 maps all 256 byte values to valid Unicode, never fails on binary
-      substituteInPlace $out/odroid-c4/acs_tool.py \
-        --replace-fail 'utf-8' 'latin-1'
     '';
     meta.license = final.lib.licenses.unfreeRedistributableFirmware;
   };
@@ -65,6 +60,12 @@ final: prev: {
     filesToInstall = [ "u-boot.bin" ];
     defconfig = "odroid-c4_defconfig";
 
+    # Override the default postInstall from buildUBoot.
+    # The default tries to copy bl2.bin, bl21.bin, etc. from src/odroid-c4,
+    # but our source is just U-Boot upstream — the FIP blobs are assembled
+    # entirely in postBuild below.
+    postInstall = "";
+
     # G12A (S905X3) requires ATF for BL31 and encrypted boot blobs.
     # Host tools needed during the build (not for the target):
     # - bison/flex: U-Boot's config parser generator (HOSTCC tools)
@@ -96,6 +97,12 @@ final: prev: {
       cp $FIP/{bl2.bin,bl30.bin,bl301.bin,bl31.img,blx_fix.sh,acs_tool.py,aml_encrypt_g12a,acs.bin} \
          u-boot.bin tmp/
       cd tmp
+
+      # Patch acs_tool.py: it incorrectly uses utf-8 on binary data.
+      # latin-1 maps all 256 byte values to valid Unicode, never fails.
+      # Must be done here (not in postFetch) because the repo is cached.
+      substituteInPlace acs_tool.py \
+        --replace-fail 'utf-8' 'latin-1'
 
       # Process BL2: run acs_tool first (generates acs.bin), then blx_fix.sh
       # blx_fix.sh internally handles BL21 generation from bl2.bin + acs.bin
