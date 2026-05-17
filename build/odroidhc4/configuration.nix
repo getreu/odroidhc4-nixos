@@ -30,12 +30,17 @@ let
   '';
 
   # Armbian ships U-Boot at this path on the HC4.
-  # runCommandLocal builds on the HC4 itself (no sandbox) so it can
-  # access the Armbian host filesystem path /usr/lib/linux-u-boot-current-odroidhc4/.
-  armbianUboot = pkgs.runCommandLocal "armbian-uboot-hc4" { } ''
-    mkdir -p $out
-    cp /usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin $out/u-boot.bin
-  '';
+  # stdenv.mkDerivation with enableSandbox = false allows the build to
+  # read from the host filesystem path /usr/lib/linux-u-boot-current-odroidhc4/.
+  armbianUboot = pkgs.stdenv.mkDerivation {
+    name = "armbian-uboot-hc4";
+    enableSandbox = false;
+    unpackPhase = "true";
+    buildPhase = ''
+      cp /usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin $out/u-boot.bin
+    '';
+    installPhase = "true";
+  };
 
 in
 
@@ -89,7 +94,7 @@ in
   # SD image configuration
   sdImage = {
     populateFirmwareCommands = ''
-      # Copy Armbian's pre-built U-Boot FIP binary
+      # Copy Armbian's pre-built U-Boot binary
       cp ${armbianUboot}/u-boot.bin firmware/
 
       # Copy boot script
