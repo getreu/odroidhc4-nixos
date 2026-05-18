@@ -29,7 +29,7 @@ and a file copy.
 ## Project Structure
 
 ```
-build/odroidhc4/
+build/odroidhc4-repro/
 ├── flake.nix                     # Flake: nixosSystem, packages, devShells, checks
 ├── configuration.nix             # NixOS config: SD image, fan, SSH, extlinux
 ├── overlay/
@@ -70,7 +70,7 @@ u-boot-odroid-c4 = final.stdenv.mkDerivation {
 ## Build Instructions
 
 ```bash
-cd build/odroidhc4
+cd build/odroidhc4-repro
 
 # Build U-Boot only (fast — ~5 seconds)
 nix build .#u-boot
@@ -89,6 +89,99 @@ nohup nix build .#sdImage > build.log 2>&1 &
 
 # Open a dev shell for editing
 nix develop
+```
+
+## Using the Resulting Image
+
+After the build completes, the compressed SD image is available at:
+
+```
+result/sd-image/nixos-image-sd-card-*.img.zst
+```
+
+For example: `result/sd-image/nixos-image-sd-card-25.11.20260514.d7a713c-aarch64-linux.img.zst`
+
+### Flash to SD Card
+
+1. **Identify your SD card** — ensure you select the correct device:
+
+   ```bash
+   lsblk
+   # Example: /dev/sdX or /dev/mmcblk0
+   ```
+
+2. **Flash the image** (replace `/dev/sdX` with your actual device):
+
+   This lasts some minutes depending on your SD card.
+
+   ```bash
+   cd odroidhc4/result/sd-image
+   SD_CARD=/dev/sdX
+   IMG=$(ls nixos-image-sd-card-*.img.zst)
+
+   # Print hash of the uncompressed image (optional)
+   zstd -dc "$IMG" | sha256sum
+
+   # Copy the image on the SD card
+   zstd -dc "$IMG" | sudo dd of="$SD_CARD" bs=4M status=progress conv=fsync
+   ```
+
+
+### First Boot
+
+1. Insert the SD card into the Odroid HC4
+2. Connect an Ethernet cable (for headless SSH access)
+3. Power on the device
+4. Wait 1–2 minutes for first-boot initialization
+
+### Default Credentials
+
+The image uses a **NixOS flake-based configuration**. Credentials depend on your `configuration.nix`:
+
+- **Default root**: Use the password/policy defined in your NixOS configuration
+- **SSH key access**: If configured, add your public key to `~/.ssh/authorized_keys`
+- **Network**: The device obtains an IP via DHCP — check your router's client list
+
+### SSH Access
+
+```bash
+# Find the device on your network (replace with your network range)
+nmap -sn 192.168.1.0/24 | grep odroid
+
+# Or check DHCP leases on your router
+# Then SSH in:
+ssh root@<device-ip>
+```
+
+### Updating the Image
+
+When you modify `configuration.nix` or `flake.nix`:
+
+```bash
+# Rebuild the SD image
+nix build .#sdImage
+
+# Flash the new image (warning: erases the card)
+cd result/sd-image
+IMG=$(ls nixos-image-sd-card-*.img.zst)
+zstd -dc "$IMG" | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+### Expanding the Root Filesystem
+
+If your SD card is larger than the image partition, expand the root filesystem:
+
+```bash
+# Boot from the SD card, then run:
+nixos-rebuild switch --boot-device /dev/mmcblk0
+```
+
+Or manually:
+
+```bash
+sudo sgdisk -e /dev/mmcblk0   # Resize partition to fill disk
+sudo e2fsck -f /dev/mmcblk0p2  # Check filesystem
+sudo resize2fs /dev/mmcblk0p2  # Expand filesystem
 ```
 
 ## Architecture
@@ -173,10 +266,3 @@ sha256sum result/u-boot.bin
 ```
 
 If the hash doesn't match, the build is using corrupted data.
-
-<!--## Next Steps
-
-1. **Test on real hardware** — flash the SD image to an Odroid HC4 and verify boot
-2. **Monitor Hardkernel** — check for newer firmware versions periodically
-3. **Consider packaging** — submit this overlay to `nixos-hardware` or `nixpkgs`
-4. **Document SD flashing** — add instructions for manual U-Boot flashing-->

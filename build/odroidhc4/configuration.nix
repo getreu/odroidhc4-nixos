@@ -96,7 +96,7 @@ in
       cp ${config.boot.kernelPackages.kernel}/Image firmware/Image
 
       # Copy device tree
-      cp ${config.boot.kernelPackages.kernel}/dtbs/${dtbFile} firmware/${dtbFile}
+      cp ${config.boot.kernelPackages.kernel}/dtbs/amlogic/${dtbFile} firmware/${dtbFile}
 
       # Copy initial RAM disk
       cp ${config.system.build.initialRamdisk}/initrd firmware/initrd
@@ -110,7 +110,7 @@ in
     '';
 
     firmwarePartitionOffset = 8;
-    firmwareSize = 64;
+    firmwareSize = 256;
     firmwarePartitionName = "FIRMWARE";
     compressImage = true;
     expandOnBoot = true;
