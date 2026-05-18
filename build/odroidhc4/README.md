@@ -29,7 +29,7 @@ and a file copy.
 ## Project Structure
 
 ```
-build/odroidhc4-repro/
+build/odroidhc4/
 ├── flake.nix                     # Flake: nixosSystem, packages, devShells, checks
 ├── configuration.nix             # NixOS config: SD image, fan, SSH, extlinux
 ├── overlay/
@@ -70,7 +70,7 @@ u-boot-odroid-c4 = final.stdenv.mkDerivation {
 ## Build Instructions
 
 ```bash
-cd build/odroidhc4-repro
+cd build/odroidhc4
 
 # Build U-Boot only (fast — ~5 seconds)
 nix build .#u-boot

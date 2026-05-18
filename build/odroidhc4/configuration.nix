@@ -14,23 +14,25 @@ let
   ramdiskAddr = "0x11800000";
 
   # Generate boot.scr from boot.cmd using mkimage
-  # runCommandLocal ensures this builds on the HC4 itself (no sandbox)
-  # where mkimage is available from nixpkgs' ubootTools package
-  bootScript = pkgs.runCommandLocal "boot.scr" { } ''
-    ${pkgs.ubootTools}/bin/mkimage -A arm64 -O linux -T script -C none \
-      -a 0 -e 0 \
-      -n "NixOS Odroid HC4" \
-      -d ${pkgs.writeText "boot.cmd" ''
-        setenv bootargs "console=ttyS0,115200n8 console=tty0 root=/dev/mmcblk0p2 rw rootwait rootfstype=ext4"
-        load mmc 0:1 ${kernelAddr} Image
-        load mmc 0:1 ${fdtAddr} ${dtbFile}
-        load mmc 0:1 ${ramdiskAddr} initrd
-        booti ${kernelAddr} ${ramdiskAddr} ${fdtAddr}
-      ''} $out
-  '';
-
-  # U-Boot binary from Armbian, provided by the odroid-c4 overlay.
-  armbianUboot = pkgs.u-boot-armbian-hc4;
+  # runCommandLocal ensures this builds on the build machine (no sandbox)
+  # where mkimage is available from ubootTools
+  bootScript =
+    pkgs.runCommand "boot.scr"
+      {
+        nativeBuildInputs = [ pkgs.ubootTools ];
+      }
+      ''
+        mkimage -A arm64 -O linux -T script -C none \
+          -a 0 -e 0 \
+          -n "NixOS Odroid HC4" \
+          -d ${pkgs.writeText "boot.cmd" ''
+            setenv bootargs "console=ttyS0,115200n8 console=tty0 root=/dev/mmcblk0p2 rw rootwait rootfstype=ext4"
+            load mmc 0:1 ${kernelAddr} Image
+            load mmc 0:1 ${fdtAddr} ${dtbFile}
+            load mmc 0:1 ${ramdiskAddr} initrd
+            booti ${kernelAddr} ${ramdiskAddr} ${fdtAddr}
+          ''} $out
+      '';
 
 in
 
@@ -84,8 +86,8 @@ in
   # SD image configuration
   sdImage = {
     populateFirmwareCommands = ''
-      # Copy Armbian's pre-built U-Boot binary
-      cp ${armbianUboot}/u-boot.bin firmware/
+      # Copy U-Boot from the buildable derivation
+      cp ${pkgs.u-boot-odroid-c4}/u-boot.bin firmware/u-boot.bin
 
       # Copy boot script
       cp ${bootScript} firmware/boot.scr

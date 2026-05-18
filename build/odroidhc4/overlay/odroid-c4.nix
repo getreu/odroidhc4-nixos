@@ -1,20 +1,40 @@
 # Self-contained NixOS overlay for Odroid C4/HC4 U-Boot support
 #
-# Embeds the Armbian U-Boot binary into the Nix store at evaluation time
-# using builtins.readFile.  This reads the file from the host filesystem
-# during evaluation (before sandboxing), embedding its contents directly
-# into the derivation.  Builders then receive the file as source input
-# with no host path references, avoiding both sandbox and GC issues.
+# This overlay uses Hardkernel's official prebuilt u-boot.bin from their
+# official firmware package. This avoids the need to assemble FIP blobs
+# from LibreELEC/amlogic-boot-fip, which contains corrupted firmware
+# (acs.bin and bl2.bin with invalid entries).
+#
+# The Hardkernel u-boot.bin is already the final assembled FIP image,
+# ready to be written to SD card at offset 1 (sector 2, byte 1024).
 
+let
+  overlayDir = ./.;
+  blobTarball = overlayDir + "/../blob/u-boot-odroidc4-189.tar.gz";
+in
 final: prev: {
-  u-boot-armbian-hc4 =
-    let
-      # Read the binary at evaluation time on the host.
-      # This is safe because it runs before any sandboxing.
-      uBootBin = builtins.readFile "/usr/lib/linux-u-boot-current-odroidhc4/u-boot.bin";
-    in
-    final.runCommand "u-boot-armbian-hc4" { } ''
+  # U-Boot package — produces u-boot.bin ready for SD card flashing.
+  #
+  # Extracts the prebuilt FIP image (872,304 bytes) from Hardkernel's
+  # official tarball (stored locally in blob/). Already properly assembled —
+  # no download or encryption required.
+  u-boot-odroid-c4 = final.stdenv.mkDerivation {
+    pname = "u-boot-odroid-c4";
+    version = "189";
+
+    # Use local tarball directly as source
+    src = blobTarball;
+
+    # Unpack the tarball before copying
+    unpackPhase = "tar xzf $src";
+
+    installPhase = ''
       mkdir -p $out
-      echo "${uBootBin}" > $out/u-boot.bin
+      cp sd_fuse/u-boot.bin $out/u-boot.bin
     '';
+
+    dontConfigure = true;
+    dontBuild = true;
+    dontFixup = true;
+  };
 }
