@@ -101,6 +101,8 @@ result/sd-image/nixos-image-sd-card-*.img.zst
 
 For example: `result/sd-image/nixos-image-sd-card-25.11.20260514.d7a713c-aarch64-linux.img.zst`
 
+`d7a713c` is the git commit hash of the nixpkgs revision (used in the filename for reproducibility tracking).
+
 ### Flash to SD Card
 
 1. **Identify your SD card** — ensure you select the correct device:
@@ -125,7 +127,6 @@ For example: `result/sd-image/nixos-image-sd-card-25.11.20260514.d7a713c-aarch64
    # Copy the image on the SD card
    zstd -dc "$IMG" | sudo dd of="$SD_CARD" bs=4M status=progress conv=fsync
    ```
-
 
 ### First Boot
 
