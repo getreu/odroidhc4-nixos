@@ -1,3 +1,12 @@
+﻿---
+title: README
+subtitle: ""
+author: Jgetreu
+date: 2026-05-18
+lang: en-US
+sort_tag: ""
+---
+
 # Reproducible Odroid HC4 NixOS SD Image
 
 ## Goal
@@ -16,8 +25,6 @@ We now use Hardkernel's **official prebuilt firmware** for the ODROID-C4:
 
 No blob assembly. No `aml_encrypt_g12a`. No cross-compilation. Just a verified tarball
 and a file copy.
-
----
 
 ## Project Structure
 
@@ -60,8 +67,6 @@ u-boot-odroid-c4 = final.stdenv.mkDerivation {
 4. **Official** — from Hardkernel themselves, not a third-party fork
 5. **Compatible** — the ODROID-C4 and HC4 share the same SoC (Amlogic G12A/S905X3)
 
----
-
 ## Build Instructions
 
 ```bash
@@ -75,8 +80,12 @@ ls -la result/u-boot.bin
 sha256sum result/u-boot.bin
 # Expected: c5535a03f5399fdd574c4e9c2c94fa554d5adf9570dac88a4999800431d6ee58
 
-# Build the full SD image (~10-15 minutes depending on build system)
-nix build .#sdImage
+# Check and evaluate the build configuration (fast)
+nix flake check
+nix build .#checks.x86_64-linux.nixosConfig 2>&1
+
+# Build the full SD image (2-3 hours minutes depending on build system)
+nohup nix build .#sdImage > build.log 2>&1 &
 
 # Open a dev shell for editing
 nix develop
