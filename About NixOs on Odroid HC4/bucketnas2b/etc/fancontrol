@@ -1,0 +1,12 @@
+# Default config for the Odroid HC4 -- adjust to your needs (MINTEMP=40)
+INTERVAL=10
+DEVPATH=hwmon0=devices/virtual/thermal/thermal_zone0 hwmon2=devices/platform/pwm-fan
+DEVNAME=hwmon0=cpu_thermal hwmon2=pwmfan
+FCTEMPS=hwmon2/pwm1=hwmon0/temp1_input
+FCFANS= hwmon2/pwm1=hwmon2/fan1_input
+MINTEMP=hwmon2/pwm1=40
+MAXTEMP=hwmon2/pwm1=60
+MINSTART=hwmon2/pwm1=150
+MINSTOP=hwmon2/pwm1=30
+#MAXPWM=hwmon2/pwm1=180
+MAXPWM=hwmon2/pwm1=90
