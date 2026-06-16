@@ -203,10 +203,10 @@ Digests:
 - **Only one keyslot (0) exists.** If this passphrase is lost, the data is unrecoverable unless a header backup was made.
 - **PBKDF is argon2i** — very expensive to brute-force (455 MiB memory, 4 threads, 4 iterations).
 - **No key files** exist on disk anywhere. The passphrase is the sole recovery vector.
-- **Passphrase candidate:** the string `hosPF7RilGJ` found in `/root/bin/start-disks` and `SYNCROOT-dev/bucketnas-unlock` — this is piped via `echo` to SSH, but **must be verified** as the LUKS passphrase. It may instead be an SSH key passphrase or a different secret.
+- **Passphrase:** `hosPF7RilGJ` — **verified 2026-06-16** (`cryptsetup open /dev/md127 md1-crypt` succeeded on NixOS). Found originally in `/root/bin/start-disks` and `SYNCROOT-dev/bucketnas-unlock`.
 
 ```
-LUKS PASSPHRASE: hosPF7RilGJ   ← CANDIDATE (UNVERIFIED — test on /dev/md1 before relying on this)
+LUKS PASSPHRASE: hosPF7RilGJ   ← VERIFIED 2026-06-16 on NixOS (cryptsetup open /dev/md127 succeeded)
 ```
 
 ### Verify Passphrase (from recovery media)

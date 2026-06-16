@@ -12,6 +12,8 @@ migrating from a working Armbian system.
 | Kernel load | ✅ Working | Loads Image, DTB, initrd from ext4 root |
 | NixOS activation | ✅ Working | /etc, /var, /bin all created on first boot |
 | Ethernet / SSH | ✅ Working | SSH at root@192.168.12.120, password: nixos |
+| SATA drives | ✅ Working | pcie_aspm=off; both drives detected at 6 Gbps |
+| USB keyboard | ✅ Working | usb-rebind service; enumerated at t=49.8s |
 | HDMI console | ❌ No output | meson-drm binding fails (non-critical for NAS use) |
 
 ## How to Access
@@ -70,11 +72,21 @@ is invisible on the MDIO bus.
 
 ```
 build/odroidhc4/
-├── configuration.nix        ← main NixOS config (edit this)
-├── flake.nix                ← build entry point: nix build .#sdImage
-├── overlay/odroid-c4.nix   ← U-Boot FIP package
+├── flake.nix                        ← build entry point: nix build .#sdImage
+├── configuration.nix                ← NixOS config → /etc/nixos/configuration.nix on device
+├── hardware.nix                     ← hardware config → /etc/nixos/hardware.nix on device
+├── sd-image.nix                     ← SD image build only (boot script, FIP) — not on device
+├── overlay/odroid-c4.nix            ← U-Boot FIP package
 ├── blob/armbian-fip-odroid-hc4.bin  ← prebuilt FIP binary
 └── result/odroid-hc4-nixos.img.zst  ← latest built image
+```
+
+After first boot, manage the device via `/etc/nixos/` on the device itself:
+
+```bash
+ssh root@192.168.12.120
+vi /etc/nixos/configuration.nix
+nixos-rebuild switch
 ```
 
 ## SD Image Layout
@@ -118,41 +130,38 @@ sudo sync
 | MMC host | `meson-gx-mmc` built into kernel (=y), no module needed |
 | DRM | `meson-drm` + `meson_dw_hdmi` + `meson-canvas` — loads but fails to bind |
 
-## Current configuration.nix key settings
+## Key Settings
+
+**`hardware.nix`** (hardware — also at `/etc/nixos/hardware.nix` on device):
 
 ```nix
-# Bootargs (in bootScript / setenv bootargs):
-# "console=ttyAML0,115200 console=tty0 root=LABEL=NIXOS_SD rw rootwait rootfstype=ext4
-#  init=${config.system.build.toplevel}/init"
-
 boot.kernelParams = [
-  "console=ttyAML0,115200"
-  "root=LABEL=NIXOS_SD"
-  "rootfstype=ext4"
-  "rootwait"
-  "loglevel=7"
-  "console=tty0"
+  "console=ttyAML0,115200" "root=LABEL=NIXOS_SD" "rootfstype=ext4"
+  "rootwait" "loglevel=7" "console=tty0"
+  "pcie_aspm=off"          # prevent SATA link loss via ASPM L1
+  "usbcore.autosuspend=-1" # prevent USB keyboard from sleeping
 ];
-
 boot.initrd.kernelModules = [ "stmmac" "dwmac_meson8b" "ext4" ];
+boot.kernelModules = [ "mdio-mux-meson-g12a" "meson-canvas" "meson-drm" "meson_dw_hdmi" ];
+hardware.fancontrol.enable = true;
+fileSystems."/" = { device = "/dev/disk/by-label/NIXOS_SD"; fsType = "ext4"; };
+```
 
-boot.kernelModules = [
-  "mdio-mux-meson-g12a"  # MDIO mux for RTL8211F PHY
-  "meson-canvas"
-  "meson-drm"
-  "meson_dw_hdmi"
-];
+**`configuration.nix`** (user config — also at `/etc/nixos/configuration.nix` on device):
 
+```nix
+networking.hostName = "odroid-hc4";
 networking.useNetworkd = true;
 systemd.network.networks."10-eth" = {
   matchConfig.Type = "ether";
   networkConfig = { DHCP = "yes"; Gateway = "192.168.12.1"; DNS = "192.168.12.1"; };
   addresses = [ { Address = "192.168.12.120/24"; } ];
 };
-
 users.users.root.initialPassword = "nixos";
 services.openssh.enable = true;
-services.openssh.settings.PermitRootLogin = "yes";
+nix.settings.experimental-features = [ "nix-command" "flakes" ];
+environment.systemPackages = with pkgs; [ mdadm cryptsetup e2fsprogs mc ];
+systemd.services.usb-rebind = { ... };  # dwc3 rebind after 8s
 ```
 
 ## Issues Found (2026-06-16)
@@ -205,5 +214,5 @@ This triggers a fresh xHCI init → hub scan → keyboard enumerates in ~261 ms.
 - **HDMI console**: `meson-drm` loads but `Couldn't bind all components`. Non-critical for
   headless NAS use. Would require debugging the DRM component binding (likely `meson_ee_pwrc`
   power domain sync_state pending on hdmi-tx, pcie, vpu).
-- **USB keyboard**: image rebuilt with rebind service — needs reflash and verification.
+- **USB keyboard**: ✅ verified — cheapino enumerated at t=49.8s after boot.
 - **NAS configuration**: RAID, encryption, services — next phase.
