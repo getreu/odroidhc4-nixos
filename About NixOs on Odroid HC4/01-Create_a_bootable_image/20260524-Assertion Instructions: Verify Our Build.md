@@ -33,21 +33,17 @@ nix build .#sdImage
 ls -la result/odroid-hc4-nixos.img.zst
 zstd -d result/odroid-hc4-nixos.img.zst -o /tmp/compare.img
 
-# Sector 0: MBR (first 512 bytes should end with 0x55 0xaa)
-dd if=/tmp/compare.img bs=512 count=1 | tail -c 2 | hexdump -C
-# Expected: 55 aa
+# Sector 0: MBR — last 2 bytes must be 55 aa
+od -A x -t x1 /tmp/compare.img | grep "0001f0"
+# Expected: ... 55 aa
 
 # Sector 1: FIP — should contain magic f0 f1 2e ef
-dd if=/tmp/compare.img bs=512 skip=1 count=1 | head -c 4 | hexdump -C
-# Expected: f0 f1 2e ef
+dd if=/tmp/compare.img bs=512 skip=1 count=1 2>/dev/null | od -A x -t x1 | head -1
+# Expected: 000000 f0 f1 2e ef ...
 
-# Sector 2048: Start of first (and only) partition — should be ext4 superblock
-dd if=/tmp/compare.img bs=512 skip=2048 count=1 | head -c 2 | hexdump -C
-# Expected: 53 ef (ext4 magic at offset 0x438, but check sector start is reasonable)
-
-# Verify partition table
+# Verify partition table — exactly ONE partition starting at sector 8192
 fdisk -l /tmp/compare.img
-# Should show exactly ONE partition starting at sector 8192
+# Should show: /tmp/compare.img1  *  8192  ...  83  Linux
 ```
 
 ### 3. Compare Against Working Armbian Image
@@ -55,19 +51,17 @@ fdisk -l /tmp/compare.img
 **Goal:** Cross-reference with the known-working Armbian image.
 
 ```bash
-# The Armbian image is at:
-# ~/Armbian2Nixos-migration/20260523-Armbian-working.img.zst (or similar)
+cd ~/Armbian2Nixos-migration/Images
 
 # Decompress if needed
-cd ~/Armbian2Nixos-migration
 zstd -d 20260523-Armbian-working.img.zst -o /tmp/armbian-compare.img
 
 # Check Armbian's partition layout
 fdisk -l /tmp/armbian-compare.img
 
 # Check Armbian's FIP location and magic
-dd if=/tmp/armbian-compare.img bs=512 skip=1 count=1 | head -c 4 | hexdump -C
-# Expected: f0 f1 2e ef (same as ours)
+dd if=/tmp/armbian-compare.img bs=512 skip=1 count=1 2>/dev/null | od -A x -t x1 | head -1
+# Expected: 000000 f0 f1 2e ef ...
 
 # Both should have identical layout: MBR → FIP at sector 1 → partition at 8192
 ```
@@ -79,91 +73,83 @@ dd if=/tmp/armbian-compare.img bs=512 skip=1 count=1 | head -c 4 | hexdump -C
 ```bash
 cd /home/jgetreu/dev2/Armbian2Nixos-migration/build/odroidhc4
 
-# Check our DTB exists and matches Armbian's
-ls -la blob/meson-sm1-odroid-hc4.dtb
-
 # Verify configuration.nix references the correct DTB filename
 grep "dtbFile" configuration.nix
 # Expected: dtbFile = "meson-sm1-odroid-hc4.dtb";
 
-# Check hardware.deviceTree.filter matches
-grep -A1 "deviceTree.filter" configuration.nix
-# Expected: filter = dtbFile; (where dtbFile = "meson-sm1-odroid-hc4.dtb")
+# Check hardware.deviceTree.filter
+grep "deviceTree.filter" configuration.nix
+# Expected: hardware.deviceTree.filter = dtbFile;
 ```
 
 ### 5. Boot Script (boot.scr)
 
-**Goal:** Verify the boot.cmd → boot.scr has the same behavior as Armbian's boot script.
+**Goal:** Verify the boot.cmd loads files from the ext4 partition root (not /boot/).
+
+Boot files live at the ext4 **partition root** — U-Boot's `load` command uses paths relative to
+the filesystem root, and our partition has no /boot/ subdirectory.
 
 ```bash
 cd /home/jgetreu/dev2/Armbian2Nixos-migration/build/odroidhc4
 
-# Check boot.cmd contents — should load from ext4 partition 1
-grep -A20 "boot.cmd" configuration.nix
+# Check boot.cmd in configuration.nix — verify load paths
+grep -A 20 'mkimage' configuration.nix
 
-# Verify it:
-# 1. Sets bootargs with correct console (ttyS0,115200n8)
-# 2. Loads kernel from: load mmc 0:1 ${kernelAddr} /boot/Image
-# 3. Loads DTB from:   load mmc 0:1 ${fdtAddr} /boot/dtb/meson-sm1-odroid-hc4.dtb
-# 4. Loads initrd from: load mmc 0:1 ${ramdiskAddr} /boot/initrd
-# 5. Boots with: booti ${kernelAddr} ${ramdiskAddr} ${fdtAddr}
-
-# Compare with Armbian's boot.cmd from the working image
-# Armbian typically has /boot/boot.cmd or /boot/boot.scr on the FAT partition
-# Mount the Armbian image and check
-mkdir -p /tmp/armbian-mount
-losetup -fP /tmp/armbian-compare.img
-fdisk -l /dev/loop0  # find partition numbers
-# Mount first partition (FAT or ext4 depending on Armbian layout)
-mount /dev/loop0p1 /tmp/armbian-mount
-cat /tmp/armbian-mount/boot/boot.cmd 2>/dev/null || cat /tmp/armbian-mount/boot.cmd 2>/dev/null
-# Verify our boot.cmd matches Armbian's logic (same load addresses, same paths)
-umount /tmp/armbian-mount
-losetup -d /dev/loop0
+# It must:
+# 1. Set bootargs with console=ttyAML0,115200 and init=<nix-store-path>/init
+# 2. Load kernel from:  load mmc 0:1 <addr> /Image
+# 3. Load DTB from:     load mmc 0:1 <addr> /dtb/meson-sm1-odroid-hc4.dtb
+# 4. Load initrd from:  load mmc 0:1 <addr> /initrd
+# 5. Boot with:         booti <kernelAddr> <ramdiskAddr>:${initrd_size} <fdtAddr>
 ```
 
 ### 6. Kernel Command Line Parameters
 
-**Goal:** Verify bootargs match Armbian's.
+**Goal:** Verify bootargs match what the Amlogic S905X3 SoC requires.
 
 ```bash
 cd /home/jgetreu/dev2/Armbian2Nixos-migration/build/odroidhc4
 
-# Check our kernel params in configuration.nix
-grep -A5 "kernelParams" configuration.nix
+# Check bootargs in the bootScript (setenv bootargs) in configuration.nix
+grep -A 3 "setenv bootargs" configuration.nix
 
-# Should include:
-#   console=ttyS0,115200n8
+# Must include:
+#   console=ttyAML0,115200    (Amlogic meson_uart driver — NOT ttyS0)
 #   console=tty0
 #   root=LABEL=NIXOS_SD
-#   rootfstype=ext4
+#   rw
 #   rootwait
+#   rootfstype=ext4
+#   init=<nix-store-path>/init   (required for NixOS initramfs activation)
 
-# Compare with Armbian's cmdline.txt or bootargs
-# Armbian typically uses /boot/armbianEnv.txt or /boot/cmdline.txt
-grep -r "console\|root\|rootfstype" /tmp/armbian-mount/boot/ 2>/dev/null
-# Verify our params are compatible (same console, ext4 root, rootwait)
+# Also check boot.kernelParams (applied by extlinux/bootloader, separate from bootScript):
+grep -A 10 "kernelParams" configuration.nix
 ```
+
+**Note on `init=`:** Without `init=` in bootargs, the NixOS initramfs service
+`initrd-find-nixos-closure` cannot locate the NixOS system closure, causing activation to
+silently fail — the system stays in the initramfs with no /etc created on disk.
+
+**Note on `ttyAML0`:** The Amlogic S905X3 UART uses the `meson_uart` driver, device
+`/dev/ttyAML0`. Using `ttyS0` produces no serial output.
 
 ### 7. Filesystem Type
 
-**Goal:** Confirm we use ext4 root (not FAT32 like some Hardkernel images).
+**Goal:** Confirm we use ext4 root.
 
 ```bash
-# Our partition starts at sector 8192 in our image (not 2048)
-# ext4 superblock magic 0x53EF appears at offset 0x438 (1080) in the superblock
-# So at sector start + 0x438 = 512*8192 + 1080 = 4195384
-dd if=/tmp/compare.img bs=1 skip=4195384 count=2 2>/dev/null | hexdump -C
-# Expected: ef 53 (little-endian 0x53ef — ext4 magic)
-
-# Armbian also uses ext4 root — verify both match
-dd if=/tmp/armbian-compare.img bs=1 skip=4195384 count=2 2>/dev/null | hexdump -C
-# Both should show ef 53
+# ext4 superblock magic 0x53EF appears at offset 0x438 (1080) within the partition.
+# Partition starts at sector 8192 → absolute byte offset = 8192*512 + 1080 = 4195384
+dd if=/tmp/compare.img bs=1 skip=4195384 count=2 2>/dev/null | od -A x -t x1
+# Expected: 000000 ef 53   (little-endian 0x53ef — ext4 magic)
 ```
 
-### 8. Root Filesystem Content — ✅ PASSED (2026-05-23)
+### 8. Root Filesystem Content
 
-**Goal:** Verify our NixOS rootfs has the expected boot files at the right paths.
+**Goal:** Verify the NixOS rootfs has boot files at the ext4 partition root.
+
+All boot files are placed at `/` (partition root), not `/boot/`. This is because U-Boot's
+`load mmc 0:1 <addr> /Image` resolves relative to the partition root.
 
 ```bash
 cd /home/jgetreu/dev2/Armbian2Nixos-migration/build/odroidhc4
@@ -171,34 +157,38 @@ cd /home/jgetreu/dev2/Armbian2Nixos-migration/build/odroidhc4
 # Decompress the full SD image
 zstd -d result/odroid-hc4-nixos.img.zst -o /tmp/odroid-hc4-nixos.img
 
-# Attach with partition scanning
-sudo losetup -fP /tmp/odroid-hc4-nixos.img
-sudo losetup -a   # note the loop device (e.g. /dev/loop0)
+# Attach with partition scanning (uses udisksctl — no sudo needed)
+udisksctl loop-setup --file /tmp/odroid-hc4-nixos.img --read-only
+# note the loop device (e.g. /dev/loop0)
+udisksctl mount --block-device /dev/loop0p1 --read-only
+# note the mount point (e.g. /run/media/<user>/NIXOS_SD)
 
-# Mount the root partition
-sudo mount /dev/loop0p1 /mnt
+MOUNT=/run/media/$(whoami)/NIXOS_SD
 
-# Check expected boot files exist
-sudo ls -la /mnt/boot/Image
-sudo ls -la /mnt/boot/initrd
-sudo ls -la /mnt/boot/boot.scr
-sudo ls -la /mnt/boot/dtb/meson-sm1-odroid-hc4.dtb
+# Check expected boot files exist at partition root:
+ls -la $MOUNT/Image
+ls -la $MOUNT/initrd
+ls -la $MOUNT/boot.scr
+ls -la $MOUNT/dtb/meson-sm1-odroid-hc4.dtb
 
-# Verify all four are present: Image, initrd, boot.scr, dtb
-sudo umount /mnt
-sudo losetup -d /dev/loop0
+# Verify all four are present: Image, initrd, boot.scr, dtb/
+udisksctl unmount --block-device /dev/loop0p1
+udisksctl loop-delete --block-device /dev/loop0
 ```
 
-**Results verified on this machine:**
+**Expected file table:**
 
-| File                                     | Size                      | Status |
-| ---------------------------------------- | ------------------------- | ------ |
-| `/mnt/boot/Image`                        | 60,383,744 bytes (~60 MB) | ✅     |
-| `/mnt/boot/initrd`                       | 11,506,725 bytes (~11 MB) | ✅     |
-| `/mnt/boot/boot.scr`                     | 772 bytes                 | ✅     |
-| `/mnt/boot/dtb/meson-sm1-odroid-hc4.dtb` | 77,219 bytes              | ✅     |
+| File                                     | Size (approx)   | Location         |
+| ---------------------------------------- | --------------- | ---------------- |
+| `Image`                                  | ~60 MB          | `/Image`         |
+| `initrd`                                 | ~11 MB          | `/initrd`        |
+| `boot.scr`                               | ~772 bytes      | `/boot.scr`      |
+| `meson-sm1-odroid-hc4.dtb`               | ~77 KB          | `/dtb/`          |
 
-**Note:** The original bug was that `populateRootCommands` used `./boot/` paths, but the sd-image module's `make-ext4-fs.nix` only copies `./files/*` into the rootfs. Fixed by changing all `./boot/` references to `./files/boot/`.
+**Note on populateRootCommands:** Boot files must be placed as `./files/Image`,
+`./files/dtb/…`, `./files/initrd`, `./files/boot.scr`. The sd-image module's
+`make-ext4-fs.nix` copies `./files/*` into the rootfs image root. Using `./files/boot/Image`
+would put them under `/boot/` on the partition, which U-Boot cannot find.
 
 ### 9. Memory Addresses
 
@@ -207,63 +197,46 @@ sudo losetup -d /dev/loop0
 ```bash
 cd /home/jgetreu/dev2/Armbian2Nixos-migration/build/odroidhc4
 
-# Check configuration.nix — FIP is ~1.3MB (at sector 1 = 512KB)
-# Kernel at 0x34000000 (54MB) — safely above FIP
-# DTB at 0x04080000 (64.5MB) — safely above FIP
-# Initrd at 0x32000000 (52MB) — safely above FIP
-
+# FIP is ~1.3MB; all load addresses must be well above this.
 grep -E "kernelAddr|fdtAddr|ramdiskAddr" configuration.nix
 # Expected:
-#   kernelAddr = "0x34000000";  (~54 MB)
-#   fdtAddr = "0x04080000";     (~64 MB)
-#   ramdiskAddr = "0x32000000"; (~52 MB)
+#   kernelAddr   = "0x34000000";   (~852 MB — safely above FIP)
+#   fdtAddr      = "0x04080000";   (~64.5 MB — safely above FIP)
+#   ramdiskAddr  = "0x32000000";   (~800 MB — safely above FIP)
 # All >> 1.3MB (FIP size) — no overlap
 ```
 
 ### 10. Final Checklist Summary
 
-| Check                              | Expected                     | Status         |
-| ---------------------------------- | ---------------------------- | -------------- |
-| FIP magic bytes                    | `f0 f1 2e ef`                | ✅ verified    |
-| FIP at sector 1                    | Yes                          | ✅ verified    |
-| Partition starts at sector 8192    | Yes                          | ✅ verified    |
-| Single ext4 partition              | One partition                | ✅ verified    |
-| Root fs is ext4                    | Magic `53 ef`                | ☐ see §7       |
-| MBR signature                      | `55 aa`                      | ✅ verified    |
-| DTB filename                       | `meson-sm1-odroid-hc4.dtb`   | ✅ verified    |
-| Boot files present                 | Image, initrd, boot.scr, dtb | ✅ verified    |
-| Boot args: ttyS0 console           | Yes                          | ✅ (in config) |
-| Boot args: root=LABEL=NIXOS_SD     | Yes                          | ✅ (in config) |
-| Boot args: rootfstype=ext4         | Yes                          | ✅ (in config) |
-| Boot args: rootwait                | Yes                          | ✅ (in config) |
-| Boot script loads from mmc 0:1     | Yes                          | ✅ (in config) |
-| Boot script loads /boot/Image      | Yes                          | ✅ (in config) |
-| Boot script loads /boot/initrd     | Yes                          | ✅ (in config) |
-| Boot script loads /boot/dtb/\*.dtb | Yes                          | ✅ (in config) |
-| Boot script uses booti             | Yes                          | ✅ (in config) |
-| Memory addresses don't overlap FIP | All > 1 MB                   | ✅ verified    |
+| Check                                    | Expected                              | Status      |
+| ---------------------------------------- | ------------------------------------- | ----------- |
+| FIP magic bytes                          | `f0 f1 2e ef`                         | ✅ verified |
+| FIP at sector 1                          | Yes                                   | ✅ verified |
+| Partition starts at sector 8192          | Yes                                   | ✅ verified |
+| Single ext4 partition                    | One partition, type 0x83              | ✅ verified |
+| Root fs is ext4                          | Magic `ef 53` at 8192×512+1080        | ✅ verified |
+| MBR signature                            | `55 aa`                               | ✅ verified |
+| DTB filename                             | `meson-sm1-odroid-hc4.dtb`            | ✅ verified |
+| Boot files at partition root             | `/Image`, `/initrd`, `/boot.scr`, `/dtb/` | ✅ verified |
+| Boot args: ttyAML0 console               | `console=ttyAML0,115200`              | ✅ verified |
+| Boot args: root=LABEL=NIXOS_SD           | Yes                                   | ✅ verified |
+| Boot args: rootfstype=ext4               | Yes                                   | ✅ verified |
+| Boot args: rootwait                      | Yes                                   | ✅ verified |
+| Boot args: init=<nix-store-path>/init    | Yes                                   | ✅ verified |
+| Boot script loads from mmc 0:1           | Yes                                   | ✅ verified |
+| Boot script loads /Image                 | Yes (partition root, not /boot/)      | ✅ verified |
+| Boot script loads /initrd                | Yes (partition root, not /boot/)      | ✅ verified |
+| Boot script loads /dtb/*.dtb             | Yes (partition root, not /boot/dtb/)  | ✅ verified |
+| Boot script uses booti                   | Yes                                   | ✅ verified |
+| Memory addresses don't overlap FIP       | All > 1.3 MB                          | ✅ verified |
 
-### Root Cause & Fix Summary
+### Fixes Applied (history)
 
-**Bug:** `populateRootCommands` used `./boot/` paths, which copied files to `./boot/` alongside the rootfs build directory — not inside it. The sd-image module's `make-ext4-fs.nix` only copies `./files/*` into the rootfs image.
+1. **MBR was zeros** — fixed by writing MBR with type `0x83` Linux partition entry and `55 aa` signature.
+2. **Partition at sector 2048 overlapped FIP** — fixed by moving to sector 8192.
+3. **Boot files at `./boot/`** — fixed: `populateRootCommands` now uses `./files/Image` etc. (partition root).
+4. **Wrong serial console `ttyS0`** — fixed to `ttyAML0` (Amlogic `meson_uart` driver).
+5. **Missing `init=` in bootargs** — fixed: `init=${config.system.build.toplevel}/init` added to `setenv bootargs` in `bootScript`.
+6. **Missing MDIO mux driver** — fixed: `mdio-mux-meson-g12a` added to `boot.kernelModules`.
 
-**Fix:** Changed all `./boot/` references to `./files/boot/` in `configuration.nix` `populateRootCommands`:
-
-```
-populateRootCommands = ''
-  mkdir -p ./files/boot/dtb
-
-  cp ${config.boot.kernelPackages.kernel}/Image           ./files/boot/Image
-  cp ${config.boot.kernelPackages.kernel}/dtbs/amlogic/${dtbFile} ./files/boot/dtb/${dtbFile}
-  cp ${config.system.build.initialRamdisk}/initrd         ./files/boot/initrd
-  cp ${bootScript}                                        ./files/boot/boot.scr
-
-  echo "Root boot files:"
-  ls -la ./files/boot/
-  ls -la ./files/boot/dtb/
-'';
-```
-
----
-
-All critical checks pass. The image should boot the Odroid HC4.
+All checks pass. The image boots the Odroid HC4 to SSH (root@192.168.12.120).

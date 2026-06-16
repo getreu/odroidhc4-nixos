@@ -54,25 +54,31 @@ Sectors 2587–8191: Unused gap
 Sectors 8192+:     Single ext4 partition (NixOS root filesystem)
 ```
 
-**No FAT32 partition.** All boot files live on ext4 at `/boot/`:
+**No FAT32 partition.** All boot files live on ext4 at the **partition root** (`/`):
 
-| File                                 | Source                               | Purpose                              |
-| ------------------------------------ | ------------------------------------ | ------------------------------------ |
-| `/boot/Image`                        | Kernel output                        | aarch64 Linux kernel                 |
-| `/boot/initrd`                       | `config.system.build.initialRamdisk` | Initramfs with Nix store             |
-| `/boot/dtb/meson-sm1-odroid-hc4.dtb` | Kernel dtbs                          | Device tree for HC4                  |
-| `/boot/boot.scr`                     | U-Boot mkimage                       | Boot script (compiled from boot.cmd) |
+| File                               | Source                               | Purpose                              |
+| ---------------------------------- | ------------------------------------ | ------------------------------------ |
+| `/Image`                           | Kernel output                        | aarch64 Linux kernel                 |
+| `/initrd`                          | `config.system.build.initialRamdisk` | Initramfs with Nix store             |
+| `/dtb/meson-sm1-odroid-hc4.dtb`    | Kernel dtbs                          | Device tree for HC4                  |
+| `/boot.scr`                        | U-Boot mkimage                       | Boot script (compiled from boot.cmd) |
+
+Boot files are at the partition root because U-Boot's `load mmc 0:1 <addr> /Image` resolves
+paths relative to the filesystem root, not to any `/boot/` subdirectory.
 
 The boot script (U-Boot's `boot.cmd`) sets boot arguments and loads the kernel/initrd/DTB from
 the ext4 partition at specific memory addresses to avoid FIP overlap:
 
 ```
-setenv bootargs "console=ttyS0,115200n8 console=tty0 root=LABEL=NIXOS_SD rw rootwait rootfstype=ext4"
-load mmc 0:1 0x34000000 /boot/Image
-load mmc 0:1 0x04080000 /boot/dtb/meson-sm1-odroid-hc4.dtb
-load mmc 0:1 0x32000000 /boot/initrd
-booti 0x34000000 0x32000000 0x04080000
+setenv bootargs "console=ttyAML0,115200 console=tty0 root=LABEL=NIXOS_SD rw rootwait rootfstype=ext4 init=<nix-store-path>/init"
+load mmc 0:1 0x34000000 /Image
+load mmc 0:1 0x04080000 /dtb/meson-sm1-odroid-hc4.dtb
+load mmc 0:1 0x32000000 /initrd
+booti 0x34000000 0x32000000:${initrd_size} 0x04080000
 ```
+
+`console=ttyAML0,115200` — the Amlogic S905X3 UART uses the `meson_uart` driver; `ttyS0` is silent.
+`init=` — required for NixOS initramfs activation; without it the system stays in the initramfs.
 
 Memory addresses are chosen well above 1.3 MB (FIP size) to avoid conflict with the FIP stored
 at sector 1.
@@ -82,7 +88,7 @@ at sector 1.
 ```
 configuration.nix (NixOS config)
   ├── sd-image module → creates ext4 rootfs with Nix store closure
-  ├── populateRootCommands → copies boot files into ./files/boot/
+  ├── populateRootCommands → copies boot files into ./files/ (partition root)
   └── make-ext4-fs.nix → creates compressed ext4-fs.img.zst
 
 overlay/odroid-c4.nix
@@ -97,17 +103,18 @@ system.build.finalSdImage (mkDerivation in flake.nix):
   6. Compress with zstd
 ```
 
-**Why `./files/boot/` and not `./boot/`?** This is the critical detail. The NixOS
+**Why `./files/Image` and not `./boot/Image` or `./files/boot/Image`?** The NixOS
 `make-ext4-fs.nix` module creates a `./files/` directory, runs `populateRootCommands` inside it,
-then copies `./files/*` into the rootfs image. Using `./boot/` instead would place the boot
-files _alongside_ the rootfs build directory — never making it into the final image.
+then copies `./files/*` into the rootfs image root. Using `./boot/` would place boot files
+_alongside_ the build directory (never in the image). Using `./files/boot/` would put them
+under `/boot/` on the partition — where U-Boot cannot find them.
 
 ## Building
 
 ### Quick Start
 
 ```bash
-cd build/odroidhc4-repro
+cd build/odroidhc4
 
 # Validate the configuration evaluates correctly (fast)
 nix flake show
@@ -191,10 +198,10 @@ sudo dd if=/tmp/odroid-hc4-nixos.img bs=512 count=1 | tail -c 2 | hexdump -C
 sudo dd if=/tmp/odroid-hc4-nixos.img bs=512 skip=1 count=1 | head -c 4 | hexdump -C
 # Expected: f0 f1 2e ef
 
-# Verify boot files are present
+# Verify boot files are present at partition root
 sudo mount /dev/loop0p1 /mnt
-sudo ls -la /mnt/boot/
-# Should show: Image, initrd, boot.scr, dtb/
+sudo ls -la /mnt/Image /mnt/initrd /mnt/boot.scr /mnt/dtb/
+# Should show: Image, initrd, boot.scr, dtb/meson-sm1-odroid-hc4.dtb
 sudo umount /mnt
 
 # Cleanup
@@ -212,20 +219,12 @@ sudo losetup -d /dev/loop0
 
 - **SSH login:** `root` / `nixos`
 - **SSH key access:** Copy your key to `/root/.ssh/authorized_keys` after first login
-- **Network:** Obtains an IP via DHCP via `networking.useDHCP = true`
-
-### Find the Device on Your Network
-
-```bash
-# Check your router's DHCP client list, or:
-nmap -sn 192.168.1.0/24 | grep -i odroid
-# (adjust subnet to match your network)
-```
+- **Static IP:** `192.168.12.120/24` (DHCP also runs alongside)
 
 ### SSH In
 
 ```bash
-ssh root@<device-ip>
+ssh root@192.168.12.120
 ```
 
 ## Updating
@@ -233,7 +232,7 @@ ssh root@<device-ip>
 When you modify `configuration.nix` (e.g., add packages, change fan settings):
 
 ```bash
-cd build/odroidhc4-repro
+cd build/odroidhc4
 
 # Rebuild
 nix build .#sdImage
@@ -300,7 +299,7 @@ To adjust, modify `hardware.fancontrol.config` — the key parameters:
 ```nix
 # In configuration.nix:
 boot.kernelParams = [
-  "console=ttyS0,115200n8"
+  "console=ttyAML0,115200"
   "console=tty0"
   "root=LABEL=NIXOS_SD"
   "rootfstype=ext4"
@@ -328,24 +327,24 @@ sha256sum blob/armbian-fip-odroid-hc4.bin
 
 ### Boot Fails — U-Boot Can't Find Boot Files
 
-Check the boot files are present in the image:
+Check the boot files are present at the partition root:
 
 ```bash
 zstd -d result/odroid-hc4-nixos.img.zst -o /tmp/test.img
 sudo losetup -fP /tmp/test.img
 sudo mount /dev/loop0p1 /mnt
-ls -la /mnt/boot/
+ls -la /mnt/Image /mnt/initrd /mnt/boot.scr /mnt/dtb/
 sudo umount /mnt
 sudo losetup -d /dev/loop0
 ```
 
-If files are missing, the issue is in `populateRootCommands` — it must use `./files/boot/`,
-not `./boot/`.
+If files are missing from the partition root, the issue is in `populateRootCommands` —
+it must use `./files/Image` etc. (partition root), not `./files/boot/Image`.
 
 ### Device Won't Boot
 
 1. **Check the SD card** — try a different card, or re-flash
-2. **Check serial console** — connect to `ttyS0` at 115200 baud to see U-Boot output
+2. **Check serial console** — connect to `ttyAML0` at 115200 baud to see U-Boot/kernel output
 3. **Check the FIP** — verify magic bytes: `hexdump -C -n 4 -s 512 /tmp/test.img`
 4. **Check the partition layout** — partition should start at sector 8192, not 2048
 
@@ -372,7 +371,7 @@ by comparing binary layout, partition sectors, and boot script content. Key matc
 | Partition start | Sector 8192                | Sector 8192      |
 | Root fs type    | ext4                       | ext4             |
 | DTB filename    | `meson-sm1-odroid-hc4.dtb` | same             |
-| Boot console    | `ttyS0,115200n8`           | `ttyS0,115200n8` |
+| Boot console    | `ttyAML0,115200`           | `ttyAML0,115200` |
 | Boot script     | `booti` command            | `booti` command  |
 
 ## Development

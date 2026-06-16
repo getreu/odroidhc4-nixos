@@ -4,7 +4,7 @@
 Build a reproducible NixOS SD image for the Odroid HC4 (Amlogic S905X3 / SM1, aarch64),
 migrating from a working Armbian system.
 
-## Current State (2026-06-15) — SSH WORKING ✅
+## Current State (2026-06-16) — SSH WORKING ✅
 
 | Component | Status | Notes |
 |---|---|---|
@@ -155,9 +155,55 @@ services.openssh.enable = true;
 services.openssh.settings.PermitRootLogin = "yes";
 ```
 
+## Issues Found (2026-06-16)
+
+### SATA drives drop after ~40s — PCIe ASPM
+
+Both drives (WD 3TB + Seagate 3TB) detected at 6 Gbps via ASMedia ASM1061 SATA controller
+(PCIe `0000:01:00.0`, vendor `1b21:0611`). At ~111s: `SStatus FFFFFFFF SControl FFFFFFFF` —
+the PCIe link dies, all AHCI registers return 0xFF (bus gone).
+
+Root cause: Amlogic `meson-pcie` + ASPM L1 — controller enters sleep and ASMedia chip doesn't
+wake. Early hint: `meson_ee_pwrc sync_state() pending due to fc000000.pcie` (power domain tracks
+PCIe, fires after all probing completes).
+
+**Fix applied:** `pcie_aspm=off` added to `boot.kernelParams`.
+
+### USB keyboard not detected — QMK connect-debounce failure → dwc3 rebind service
+
+Keyboard: **Thomas Haukland cheapino** (custom QMK split keyboard, VID `FEE3:0000`).
+
+**Root cause chain:**
+1. `dwc3-meson-g12a` probes at ~1.76 s → VBUS on
+2. QMK cold-boots: takes 1.22 s to first D+ assert, then unstable for ~1.5 s
+   (split-half comms establishing, USB init cycling)
+3. Linux hub connect-debounce requires D+ stable for 100 ms within 1500 ms — fails
+   → `usb usb1-port2: connect-debounce failed` at ~4.5 s; port enters Disabled state
+4. QMK eventually settles but hub stops monitoring the port — keyboard stuck forever
+
+**Why VBUS delay (DT overlay `startup-delay-us`) doesn't help:**
+xHCI initialisation sends a USB bus reset (SE0) to all ports. This restarts QMK's
+USB init sequence regardless of how long VBUS was previously on. The debounce
+failure just shifts later in time, not eliminated.
+Also: NixOS's `apply_overlays.py` silently skips overlays with no `compatible`
+property (empty set intersection → skip), and the kernel DTB has no
+`regulator-always-on` on `regulator-usb-pwr-en` to delete anyway.
+
+**Fix applied:** `systemd.services.usb-rebind` — after udevd is up (keyboard has
+been settled for >30 s by then), rebind the dwc3 controller:
+```
+echo ffe09000.usb > /sys/bus/platform/drivers/dwc3-meson-g12a/unbind
+sleep 0.5
+echo ffe09000.usb > /sys/bus/platform/drivers/dwc3-meson-g12a/bind
+```
+This triggers a fresh xHCI init → hub scan → keyboard enumerates in ~261 ms.
+`usbcore.autosuspend=-1` is also set to prevent idle autosuspend on the dwc3-meson-g12a
+(keyboards on this controller don't wake from autosuspend).
+
 ## What Remains
 
 - **HDMI console**: `meson-drm` loads but `Couldn't bind all components`. Non-critical for
   headless NAS use. Would require debugging the DRM component binding (likely `meson_ee_pwrc`
   power domain sync_state pending on hdmi-tx, pcie, vpu).
+- **USB keyboard**: image rebuilt with rebind service — needs reflash and verification.
 - **NAS configuration**: RAID, encryption, services — next phase.
