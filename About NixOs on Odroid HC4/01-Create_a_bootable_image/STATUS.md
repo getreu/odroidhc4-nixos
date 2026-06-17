@@ -257,4 +257,6 @@ This triggers a fresh xHCI init → hub scan → keyboard enumerates in ~261 ms.
 - **HDMI console**: `meson-drm` loads but `Couldn't bind all components`. Non-critical for
   headless NAS use. Would require debugging the DRM component binding (likely `meson_ee_pwrc`
   power domain sync_state pending on hdmi-tx, pcie, vpu). GPU is intentionally disabled (Fix #6).
-- **NAS configuration**: RAID auto-mount at boot, file sharing services — next phase.
+- **NAS configuration** (bucketnas3): NFS server, users/groups, manual disk management
+  (`start-disks` / `stop-disks`) all working as of 2026-06-17. Remaining: RAID auto-mount at
+  boot (currently requires manual `start-disks` after each boot).
