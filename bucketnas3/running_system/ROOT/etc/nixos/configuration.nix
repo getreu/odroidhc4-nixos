@@ -65,11 +65,15 @@ in
 
   # ===== Users =====
   users.groups.users = { };
+  users.groups.getreu = { gid = 1000; };
+  users.groups.jens = { gid = 1001; };
+  users.groups."getreu-dev" = { gid = 1010; };
   users.users.getreu = {
     isNormalUser = true;
     uid = 1000;
-    group = "users";
+    group = "getreu";
     extraGroups = [
+      "users"
       "wheel"
       "tty"
       "disk"
@@ -84,14 +88,16 @@ in
   users.users.jens = {
     isNormalUser = true;
     uid = 1001;
-    group = "users";
+    group = "jens";
+    extraGroups = [ "users" ];
     shell = pkgs.bash;
     hashedPassword = "!";
   };
   users.users."getreu-dev" = {
     isNormalUser = true;
     uid = 1010;
-    group = "users";
+    group = "getreu-dev";
+    extraGroups = [ "users" ];
     shell = pkgs.bash;
     hashedPassword = "!";
   };
