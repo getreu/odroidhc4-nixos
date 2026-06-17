@@ -15,7 +15,9 @@ using a prebuilt U-Boot FIP with ext4 support extracted from the working Armbian
 ```
 build/odroidhc4/
 ├── flake.nix              # Flake definition: nixosSystem, packages, devShells
-├── configuration.nix      # NixOS config: kernel, boot, fan, SSH, networking
+├── configuration.nix      # NixOS config: SSH, networking, services
+├── hardware.nix           # Hardware config: kernel params, modules, fan, filesystems
+├── sd-image.nix           # SD image build only: boot script, FIP assembly, DTB patch
 ├── overlay/
 │   └── odroid-c4.nix      # U-Boot FIP package (prebuilt from Armbian)
 └── blob/
@@ -25,7 +27,9 @@ build/odroidhc4/
 | File                              | Purpose                                                          |
 | --------------------------------- | ---------------------------------------------------------------- |
 | `flake.nix`                       | Flake: defines `#sdImage`, `#u-boot`, `#odroid-hc4` NixOS config |
-| `configuration.nix`               | NixOS system config: kernel, boot script, fan, SSH               |
+| `configuration.nix`               | NixOS system config: SSH, networking, services                   |
+| `hardware.nix`                    | Hardware config: kernel params, modules, fan, update-boot-files  |
+| `sd-image.nix`                    | Build-time only: boot script, FIP assembly, DTB patch, profile symlink |
 | `overlay/odroid-c4.nix`           | Defines `u-boot-odroid-c4` from the prebuilt FIP                 |
 | `blob/armbian-fip-odroid-hc4.bin` | U-Boot FIP with ext4 support, extracted from Armbian             |
 
@@ -70,7 +74,7 @@ The boot script (U-Boot's `boot.cmd`) sets boot arguments and loads the kernel/i
 the ext4 partition at specific memory addresses to avoid FIP overlap:
 
 ```
-setenv bootargs "console=ttyAML0,115200 console=tty0 root=LABEL=NIXOS_SD rw rootwait rootfstype=ext4 init=<nix-store-path>/init"
+setenv bootargs "console=ttyAML0,115200 root=LABEL=NIXOS_SD rootfstype=ext4 rootwait loglevel=7 console=tty0 pcie_aspm=off usbcore.autosuspend=-1 init=/nix/var/nix/profiles/system/init"
 load mmc 0:1 0x34000000 /Image
 load mmc 0:1 0x04080000 /dtb/meson-sm1-odroid-hc4.dtb
 load mmc 0:1 0x32000000 /initrd
@@ -78,7 +82,10 @@ booti 0x34000000 0x32000000:${initrd_size} 0x04080000
 ```
 
 `console=ttyAML0,115200` — the Amlogic S905X3 UART uses the `meson_uart` driver; `ttyS0` is silent.
-`init=` — required for NixOS initramfs activation; without it the system stays in the initramfs.
+`init=/nix/var/nix/profiles/system/init` — stable path via the system profile symlink; required for
+NixOS initramfs activation and enables `nixos-rebuild --rollback`.
+`pcie_aspm=off` — prevents PCIe ASPM L1 from killing the SATA link (~40 s after boot without this).
+`usbcore.autosuspend=-1` — prevents dwc3-meson-g12a from suspending USB devices (they don't wake).
 
 Memory addresses are chosen well above 1.3 MB (FIP size) to avoid conflict with the FIP stored
 at sector 1.
@@ -86,15 +93,20 @@ at sector 1.
 ### Build Pipeline
 
 ```
-configuration.nix (NixOS config)
-  ├── sd-image module → creates ext4 rootfs with Nix store closure
-  ├── populateRootCommands → copies boot files into ./files/ (partition root)
-  └── make-ext4-fs.nix → creates compressed ext4-fs.img.zst
+configuration.nix (NixOS config — SSH, networking, services)
+  └── imports hardware.nix (kernel params, modules, fan, update-boot-files)
+        └── sd-image.nix (SD image build — boot script, DTB patch, profile symlink)
+              ├── sd-image module → creates ext4 rootfs with Nix store closure
+              ├── populateRootCommands →
+              │     cp Image, DTB (patched via fdtput), initrd, boot.scr  → ./files/
+              │     cp configuration.nix, hardware.nix                    → ./files/etc/nixos/
+              │     ln -s <toplevel>                                       → ./files/nix/var/nix/profiles/system
+              └── make-ext4-fs.nix → creates compressed ext4-fs.img.zst
 
 overlay/odroid-c4.nix
   └── u-boot-odroid-c4 → copies prebuilt FIP binary
 
-system.build.finalSdImage (mkDerivation in flake.nix):
+system.build.finalSdImage (mkDerivation in sd-image.nix):
   1. Decompress ext4-fs.img.zst
   2. Create blank image file
   3. Write MBR to sector 0

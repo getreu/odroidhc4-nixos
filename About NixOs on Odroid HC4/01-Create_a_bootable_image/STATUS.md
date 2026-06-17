@@ -4,7 +4,7 @@
 Build a reproducible NixOS SD image for the Odroid HC4 (Amlogic S905X3 / SM1, aarch64),
 migrating from a working Armbian system.
 
-## Current State (2026-06-16) — SSH WORKING ✅
+## Current State (2026-06-17) — SSH WORKING ✅
 
 | Component | Status | Notes |
 |---|---|---|
@@ -42,9 +42,9 @@ the kernel command line to locate the NixOS system closure. Without it, the serv
 Normal NixOS ARM boards use extlinux which auto-generates `init=`. Our custom `boot.scr`
 bypassed extlinux, so nothing was adding it.
 
-**Fix:** `init=${config.system.build.toplevel}/init` added to `setenv bootargs` in `bootScript`.
-`config.system.build.toplevel` expands to the exact Nix store path at build time — no
-circular dependency since `system.build.toplevel` does not depend on the sdImage derivations.
+**Fix:** `init=/nix/var/nix/profiles/system/init` added to `setenv bootargs` in `bootScript`.
+A symlink `/nix/var/nix/profiles/system → <toplevel>` is created in `populateRootCommands`
+so the init path is stable across generations (see Fix #5).
 
 ### 3. Wrong serial console device (ttyS0 → ttyAML0)
 The Amlogic S905X3 UART is driven by `meson_uart` → `/dev/ttyAML0`.
@@ -68,6 +68,39 @@ is invisible on the MDIO bus.
 "mdio-mux-meson-g12a"
 ```
 
+### 5. `nixos-rebuild --rollback` support — system profile symlink
+
+After boot, `nixos-rebuild switch` updates the active generation but boot always points to a
+fixed path. Without a stable init path, each rebuild requires reflashing.
+
+**Fix:** `populateRootCommands` in `sd-image.nix` creates:
+```
+/nix/var/nix/profiles/system → <config.system.build.toplevel>
+```
+Boot script uses `init=/nix/var/nix/profiles/system/init` instead of a hard-coded store path.
+`nixos-rebuild switch` updates the profile symlink; `nixos-rebuild --rollback` restores the
+previous one. An `update-boot-files` activation script in `hardware.nix` copies `/Image`,
+`/initrd`, and `/dtb/meson-sm1-odroid-hc4.dtb` to the ext4 root on every switch so U-Boot
+always finds the correct files for the active generation.
+
+### 6. DTB GPU node disabled — no Mali voltage regulator on HC4
+
+The Odroid HC4 GPU (`/soc/gpu@ffe40000`, Mali G31) shares the VDDEE power rail. There is no
+dedicated `mali` voltage regulator in the device tree. Without intervention, the Panfrost DRM
+driver fails to probe because it cannot find the regulator, producing:
+
+```
+panfrost ffe40000.gpu: supply mali not found, using dummy regulator
+```
+
+and attempts to operate without proper voltage control.
+
+**Fix:** The DTB is patched with `fdtput -t s ... /soc/gpu@ffe40000 status disabled` in two
+places:
+- `sd-image.nix` `populateRootCommands` — applied at image build time to `/dtb/...` on the SD
+- `hardware.nix` `system.activationScripts.update-boot-files` — reapplied on every
+  `nixos-rebuild switch` after the DTB is copied from the new kernel package
+
 ## Key Files
 
 ```
@@ -75,7 +108,8 @@ build/odroidhc4/
 ├── flake.nix                        ← build entry point: nix build .#sdImage
 ├── configuration.nix                ← NixOS config → /etc/nixos/configuration.nix on device
 ├── hardware.nix                     ← hardware config → /etc/nixos/hardware.nix on device
-├── sd-image.nix                     ← SD image build only (boot script, FIP) — not on device
+│                                       (update-boot-files activation script lives here)
+├── sd-image.nix                     ← SD image build only (boot script, FIP, profile symlink, DTB patch)
 ├── overlay/odroid-c4.nix            ← U-Boot FIP package
 ├── blob/armbian-fip-odroid-hc4.bin  ← prebuilt FIP binary
 └── result/odroid-hc4-nixos.img.zst  ← latest built image
@@ -97,8 +131,9 @@ Sectors 1-2586: U-Boot FIP (~1.3 MB, magic: f0 f1 2e ef)
 Sectors 8192+:  Single ext4 partition (LABEL=NIXOS_SD)
 ```
 
-No FAT32. Boot files at ext4 root:
-- `/Image`, `/initrd`, `/boot.scr`, `/dtb/meson-sm1-odroid-hc4.dtb`
+No FAT32. Files at ext4 root:
+- `/Image`, `/initrd`, `/boot.scr`, `/dtb/meson-sm1-odroid-hc4.dtb` (GPU node disabled)
+- `/nix/var/nix/profiles/system` → active NixOS generation (init= target, enables rollback)
 
 ## Build & Flash Commands
 
@@ -145,6 +180,14 @@ boot.initrd.kernelModules = [ "stmmac" "dwmac_meson8b" "ext4" ];
 boot.kernelModules = [ "mdio-mux-meson-g12a" "meson-canvas" "meson-drm" "meson_dw_hdmi" ];
 hardware.fancontrol.enable = true;
 fileSystems."/" = { device = "/dev/disk/by-label/NIXOS_SD"; fsType = "ext4"; };
+# Keeps boot files in sync with the active generation on every nixos-rebuild switch.
+# Also patches the DTB to disable the GPU node (no dedicated Mali voltage regulator on HC4).
+system.activationScripts.update-boot-files.text = ''
+  cp -f ${kernel}/Image /Image
+  cp -f ${initialRamdisk}/initrd /initrd
+  cp -f ${dtb}/amlogic/meson-sm1-odroid-hc4.dtb /dtb/meson-sm1-odroid-hc4.dtb
+  fdtput -t s /dtb/meson-sm1-odroid-hc4.dtb /soc/gpu@ffe40000 status disabled
+'';
 ```
 
 **`configuration.nix`** (user config — also at `/etc/nixos/configuration.nix` on device):
@@ -164,7 +207,7 @@ environment.systemPackages = with pkgs; [ mdadm cryptsetup e2fsprogs mc ];
 systemd.services.usb-rebind = { ... };  # dwc3 rebind after 8s
 ```
 
-## Issues Found (2026-06-16)
+## Issues Found and Resolved (2026-06-16 – 2026-06-17)
 
 ### SATA drives drop after ~40s — PCIe ASPM
 
@@ -213,6 +256,5 @@ This triggers a fresh xHCI init → hub scan → keyboard enumerates in ~261 ms.
 
 - **HDMI console**: `meson-drm` loads but `Couldn't bind all components`. Non-critical for
   headless NAS use. Would require debugging the DRM component binding (likely `meson_ee_pwrc`
-  power domain sync_state pending on hdmi-tx, pcie, vpu).
-- **USB keyboard**: ✅ verified — cheapino enumerated at t=49.8s after boot.
-- **NAS configuration**: RAID, encryption, services — next phase.
+  power domain sync_state pending on hdmi-tx, pcie, vpu). GPU is intentionally disabled (Fix #6).
+- **NAS configuration**: RAID auto-mount at boot, file sharing services — next phase.
