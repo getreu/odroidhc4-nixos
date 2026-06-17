@@ -18,6 +18,7 @@ in
     "flakes"
   ];
   nix.nixPath = [
+    "nixpkgs=${pkgs.path}"
     "nixos-config=/etc/nixos/configuration.nix"
   ];
 
