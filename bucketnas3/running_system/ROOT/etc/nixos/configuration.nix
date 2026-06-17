@@ -18,7 +18,6 @@ in
     "flakes"
   ];
   nix.nixPath = [
-    "nixpkgs=${pkgs.path}"
     "nixos-config=/etc/nixos/configuration.nix"
   ];
 
@@ -202,6 +201,7 @@ in
       smartmontools
       borgbackup
       nfs-utils
+      unison
     ]
     ++ [
       (writeShellScriptBin "start-disks" ''
