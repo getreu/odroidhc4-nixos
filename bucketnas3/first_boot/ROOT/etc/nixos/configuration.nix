@@ -1,0 +1,1 @@
+../../../../../build/odroidhc4/configuration.nix
