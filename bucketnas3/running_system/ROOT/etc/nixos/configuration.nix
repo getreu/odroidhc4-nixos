@@ -6,6 +6,111 @@
 }:
 let
   dataMountPoint = "/srv/dev-disk-by-uuid-1d65e612-b548-4f91-b089-1ad4260ed796";
+  diskHealth = pkgs.writeTextFile {
+    name = "disk-health";
+    executable = true;
+    destination = "/bin/disk-health";
+    text = ''
+      #!${pkgs.nushell}/bin/nu
+
+      def ok   [msg: string] { print $"  (ansi green) OK (ansi reset)  ($msg)" }
+      def warn [msg: string] { print $"  (ansi yellow)WARN(ansi reset) ($msg)" }
+      def fail [msg: string] { print $"  (ansi red)FAIL(ansi reset) ($msg)" }
+
+      def get_attr [attrs: list, name: string] {
+        try { $attrs | where name == $name | first | get raw.value } catch { 0 }
+      }
+
+      mut issues = 0
+
+      print ""
+      print $"=== Health Report: (date now | format date '%Y-%m-%d %H:%M') ==="
+
+      for disk in ["/dev/sda" "/dev/sdc" "/dev/sdb"] {
+        if not ($disk | path exists) { continue }
+
+        let data = (^smartctl --json -a $disk | complete | get stdout | from json)
+        let model = (try { $data.model_name } catch { "unknown" })
+        print $"-- ($disk)  ($model) --"
+
+        let passed = (try { $data.smart_status.passed } catch { false })
+        if $passed {
+          ok "SMART: PASSED"
+        } else {
+          $issues += 1; fail "SMART: FAILED"
+        }
+
+        let attrs = (try { $data.ata_smart_attributes.table } catch { [] })
+
+        let hours = (get_attr $attrs "Power_On_Hours")
+        if $hours > 100000 {
+          $issues += 1; fail $"Power-on hours: ($hours)  >100k — replace soon"
+        } else if $hours > 50000 {
+          warn $"Power-on hours: ($hours)  >50k — aging"
+        } else {
+          ok $"Power-on hours: ($hours)"
+        }
+
+        let realloc = (get_attr $attrs "Reallocated_Sector_Ct")
+        if $realloc > 0 {
+          $issues += 1; fail $"Reallocated sectors: ($realloc)"
+        } else {
+          ok "Reallocated sectors: 0"
+        }
+
+        let pending = (get_attr $attrs "Current_Pending_Sector")
+        if $pending > 0 { $issues += 1; fail $"Pending sectors: ($pending)" }
+
+        let temp = (try { $data.temperature.current } catch { 0 })
+        if $temp > 50 {
+          $issues += 1; fail $"Temperature: ($temp) C"
+        } else if $temp > 42 {
+          warn $"Temperature: ($temp) C"
+        } else {
+          ok $"Temperature: ($temp) C"
+        }
+
+        print ""
+      }
+
+      print "-- RAID --"
+      let mdstat = (open /proc/mdstat)
+      if ($mdstat | str contains "[UU]") {
+        ok "md1: clean [UU]"
+      } else {
+        $issues += 1
+        let reason = (
+          $mdstat
+          | lines
+          | where { |l| $l =~ '^md1' }
+          | first?
+          | default "unknown"
+          | str replace -r '^md1 : ' ""
+          | str trim
+        )
+        fail $"md1: DEGRADED — ($reason)"
+      }
+      print ""
+
+      print "-- Kernel I/O errors (7 days) --"
+      let errors = (
+        ^journalctl -k --since "7 days ago"
+        | lines
+        | where { |l| $l =~ 'I/O error|ata\d+\.\d+: exception|medium error|read error correction' }
+        | length
+      )
+      if $errors == 0 {
+        ok "No I/O errors in kernel log"
+      } else {
+        warn $"($errors) kernel I/O errors — run: journalctl -k --since '7 days ago' | grep -iE 'I/O error'"
+      }
+      print ""
+
+      if $issues > 0 {
+        print $"(ansi red)*** ($issues) issues detected above ***(ansi reset)\n"
+      }
+    '';
+  };
 in
 {
   imports = [ ./hardware.nix ];
@@ -17,10 +122,29 @@ in
     "nix-command"
     "flakes"
   ];
+  # builtins.unsafeDiscardStringContext is required here to avoid a Nix build
+  # error caused by derivation name length.
+  #
+  # Without it, the string context of pkgs.path would force Nix to include
+  # pkgs.path in the system closure.  pkgs.path is a filtered-source derivation
+  # (lib.cleanSource applied to the nixpkgs tree).  To build it, Nix runs
+  # filterSource on the already-long-named nixpkgs source, creating a new
+  # derivation whose name is derived from the input's name.  The input name is
+  # already ~205 characters, and prepending the new store hash pushes it past
+  # Nix's 211-character limit.
+  #
+  # builtins.unsafeDiscardStringContext (toString pkgs.path) avoids this:
+  #   - toString pkgs.path        → /nix/store/lv089…-source  (same value)
+  #   - unsafeDiscardStringContext → strips the context annotation, making it a
+  #                                  plain string with no recorded dependency
+  #
+  # The resulting NIX_PATH entry is correct at runtime because pkgs.path is
+  # already in the store; we just don't force Nix to re-derive it during build.
   nix.nixPath = [
-    "nixpkgs=${pkgs.path}"
+    "nixpkgs=${builtins.unsafeDiscardStringContext (toString pkgs.path)}"
     "nixos-config=/etc/nixos/configuration.nix"
   ];
+
 
   # ===== Networking =====
   networking.hostName = "bucketnas3";
@@ -153,7 +277,10 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
       ExecStart = pkgs.writeShellScript "hdparm-setup" ''
-        for disk in /dev/sda /dev/sdb; do
+        for part in \
+          /dev/disk/by-partuuid/0b5f33ec-1422-dd42-b512-bff872fa7d27 \
+          /dev/disk/by-partuuid/d92296d4-a7ea-d448-afd3-79bdfec4ddba; do
+          disk=/dev/$(${pkgs.util-linux}/bin/lsblk -ndo pkname "$(realpath "$part")")
           if [ -b "$disk" ]; then
             ${pkgs.hdparm}/bin/hdparm -q -B 128 -M 128 -S 240 "$disk" || true
           fi
@@ -172,7 +299,15 @@ in
   # ===== Data volume mount point =====
   systemd.tmpfiles.rules = [
     "d ${dataMountPoint} 0755 root root -"
+    "d /srv/dev-disk-by-uuid-45EFA09D11DEDD23 0755 root root -"
   ];
+
+  # ===== NTFS disk (sdb) =====
+  fileSystems."/srv/dev-disk-by-uuid-45EFA09D11DEDD23" = {
+    device = "/dev/disk/by-partuuid/472c237d-01";
+    fsType = "ntfs";
+    options = [ "ro" "nofail" ];
+  };
 
   # ===== Firewall =====
   # 111   — portmapper (rpcbind)   — NFS
@@ -186,7 +321,8 @@ in
   services.nfs.server.exports = ''
     # NFS export for the encrypted RAID volume.
     # Active only after start-disks mounts the volume.
-    ${dataMountPoint} 192.168.12.0/24(rw,sync,no_subtree_check,no_root_squash)
+    ${dataMountPoint}/video-audio 192.168.12.0/24(rw,sync,no_subtree_check,no_root_squash)
+    /srv/dev-disk-by-uuid-45EFA09D11DEDD23 192.168.12.0/24(ro,sync,no_subtree_check,no_root_squash)
   '';
 
   # ===== RAID + LUKS disk management =====
@@ -209,25 +345,32 @@ in
       borgbackup
       nfs-utils
       unison
+      nushell
+      diskHealth
     ]
     ++ [
       (writeShellScriptBin "start-disks" ''
         set -e
-        RAIDDISK1=/dev/sda
-        RAIDDISK2=/dev/sdb
+        RAIDPART1=/dev/disk/by-partuuid/0b5f33ec-1422-dd42-b512-bff872fa7d27
+        RAIDPART2=/dev/disk/by-partuuid/d92296d4-a7ea-d448-afd3-79bdfec4ddba
+        RAIDDISK1=/dev/$(${pkgs.util-linux}/bin/lsblk -ndo pkname "$(realpath "$RAIDPART1")")
+        RAIDDISK2=/dev/$(${pkgs.util-linux}/bin/lsblk -ndo pkname "$(realpath "$RAIDPART2")")
         MD_DEVICE=/dev/md1
 
-        echo "=== APM / spindown ==="
-        ${hdparm}/bin/hdparm -q -B 128 -M 128 -S 240 "$RAIDDISK1" || true
-        ${hdparm}/bin/hdparm -q -B 128 -M 128 -S 240 "$RAIDDISK2" || true
+        echo "=== Set spindown ==="
+        ${hdparm}/bin/hdparm -q -B 128 -M 128 -S 240 "$RAIDDISK1" > /dev/null 2>&1 || true
+        ${hdparm}/bin/hdparm -q -B 128 -M 128 -S 240 "$RAIDDISK2" > /dev/null 2>&1 || true
+        echo "spindown: APM=128 standby=20min set on $RAIDDISK1 $RAIDDISK2"
+        echo ""
 
         echo "=== Assemble RAID1 ==="
         if [ -b "$MD_DEVICE" ]; then
           echo "Already assembled — skipping"
         else
-          ${mdadm}/bin/mdadm -A "$MD_DEVICE" ''${RAIDDISK1}1 ''${RAIDDISK2}1
+          ${mdadm}/bin/mdadm -A "$MD_DEVICE" "$RAIDPART1" "$RAIDPART2"
         fi
         ${mdadm}/bin/mdadm --detail --scan
+        echo ""
 
         echo "=== Unlock LUKS: $MD_DEVICE ==="
         if ${cryptsetup}/bin/cryptsetup status md1-crypt > /dev/null 2>&1; then
@@ -235,6 +378,8 @@ in
         else
           ${cryptsetup}/bin/cryptsetup open --type luks "$MD_DEVICE" md1-crypt
         fi
+        ${cryptsetup}/bin/cryptsetup status md1-crypt 2>/dev/null | head -1
+        echo ""
 
         echo "=== Mount filesystem ==="
         if mount | grep -q /dev/mapper/md1-crypt; then
@@ -243,12 +388,13 @@ in
           mount -t ext4 -o rw,noexec,relatime /dev/mapper/md1-crypt ${dataMountPoint}
         fi
         echo "Mounted: $(mount | grep /dev/mapper/md1-crypt)"
+        echo ""
 
         echo "=== Restart NFS ==="
         systemctl restart nfs-server.service || true
+        ${pkgs.nfs-utils}/bin/exportfs -v 2>/dev/null | awk -v h="$(hostname)" '/^\// {print "  mount -t nfs " h ":" $1 " /mnt"}'
 
-        echo "=== LUKS status ==="
-        ${cryptsetup}/bin/cryptsetup status md1-crypt
+        ${diskHealth}/bin/disk-health
       '')
 
       (writeShellScriptBin "stop-disks" ''
